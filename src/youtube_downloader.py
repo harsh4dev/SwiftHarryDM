@@ -3,18 +3,18 @@ import os
 from yt_dlp import YoutubeDL
 from utils import format_mapping, convert_to_mp3
 
-download_folder = os.path.join(os.path.expanduser("~"), "Desktop")
-os.makedirs(download_folder, exist_ok=True)
-
 class YouTubeDownloader:
-    def __init__(self, url, fmt="best"):
+    def __init__(self, url, fmt="best", save_path=None):
         self.url = url
         self.fmt = fmt.lower()
+        self.save_path = save_path or os.path.join(os.path.expanduser("~"), "Desktop")
+        os.makedirs(self.save_path, exist_ok=True)
+
         self.ydl_opts = {
             "format": format_mapping(self.fmt),
-            "outtmpl": os.path.join(download_folder, "%(title)s.%(ext)s"),
+            "outtmpl": os.path.join(self.save_path, "%(title)s.%(ext)s"),
             "noplaylist": True,
-            "merge_output_format": "mp4"   # force mp4 output
+            "merge_output_format": "mp4"
         }
 
     def download(self):
