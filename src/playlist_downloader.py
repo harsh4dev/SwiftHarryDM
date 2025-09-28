@@ -13,7 +13,8 @@ class PlaylistDownloader:
         self.ydl_opts = {
             "format": format_mapping(self.fmt),
             "outtmpl": os.path.join(download_folder, "%(playlist_index)s - %(title)s.%(ext)s"),
-            "noplaylist": False
+            "noplaylist": False,
+            "merge_output_format": "mp4"   # force mp4 output
         }
 
     def download(self):

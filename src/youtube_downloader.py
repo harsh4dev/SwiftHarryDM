@@ -13,7 +13,8 @@ class YouTubeDownloader:
         self.ydl_opts = {
             "format": format_mapping(self.fmt),
             "outtmpl": os.path.join(download_folder, "%(title)s.%(ext)s"),
-            "noplaylist": True
+            "noplaylist": True,
+            "merge_output_format": "mp4"   # force mp4 output
         }
 
     def download(self):
