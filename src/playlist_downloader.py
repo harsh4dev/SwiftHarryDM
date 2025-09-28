@@ -3,7 +3,7 @@ import os
 from yt_dlp import YoutubeDL
 from utils import format_mapping, convert_to_mp3
 
-download_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+download_folder = os.path.join(os.path.expanduser("~"), "Desktop")
 os.makedirs(download_folder, exist_ok=True)
 
 class PlaylistDownloader:
