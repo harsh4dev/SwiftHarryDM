@@ -1,55 +1,34 @@
+import threading
 import os
-from threading import Thread
-import yt_dlp
+from yt_dlp import YoutubeDL
+from utils import format_mapping, convert_to_mp3
+
+download_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+os.makedirs(download_folder, exist_ok=True)
 
 class YouTubeDownloader:
-    def __init__(self, url, format_code='best', output_dir='downloads'):
+    def __init__(self, url, fmt="best"):
         self.url = url
-        self.format_code = format_code
-        self.output_dir = output_dir
-        os.makedirs(self.output_dir, exist_ok=True)
-        self.ydl_opts = self._get_opts()
-        self.thread = None
-
-    def _get_opts(self):
-        out_template = os.path.join(self.output_dir, '%(title)s.%(ext)s')
-        opts = {
-            'format': self.format_code,
-            'outtmpl': out_template,
-            'noplaylist': True,
-            'progress_hooks': [self._progress_hook],
-            'postprocessors': []
+        self.fmt = fmt.lower()
+        self.ydl_opts = {
+            "format": format_mapping(self.fmt),
+            "outtmpl": os.path.join(download_folder, "%(title)s.%(ext)s"),
+            "noplaylist": True
         }
 
-        # MP3 conversion if format_code is 'mp3'
-        if self.format_code.lower() == 'mp3':
-            opts['format'] = 'bestaudio/best'
-            opts['postprocessors'].append({
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            })
-        return opts
-
-    def _progress_hook(self, d):
-        if d['status'] == 'downloading':
-            total = d.get('total_bytes') or d.get('total_bytes_estimate')
-            downloaded = d.get('downloaded_bytes', 0)
-            if total:
-                percent = downloaded / total * 100
-                print(f"[{self.url}] Downloading: {percent:.2f}% ({downloaded/1024/1024:.2f}MB / {total/1024/1024:.2f}MB)", end='\r')
-        elif d['status'] == 'finished':
-            print(f"\n[{self.url}] Download finished, now converting...")
-
     def download(self):
-        with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-            ydl.download([self.url])
+        print(f"YouTube download started for {self.url}")
+        with YoutubeDL(self.ydl_opts) as ydl:
+            info_dict = ydl.extract_info(self.url, download=True)
+            filename = ydl.prepare_filename(info_dict)
+
+            if self.fmt == "mp3":
+                mp3_file = os.path.splitext(filename)[0] + ".mp3"
+                convert_to_mp3(filename, mp3_file)
+                print(f"MP3 saved as: {mp3_file}")
+            else:
+                print(f"Video saved as: {filename}")
 
     def start(self):
-        self.thread = Thread(target=self.download)
-        self.thread.start()
-        return self.thread
-
-    def join(self):
-        if self.thread:
-            self.thread.join()
+        t = threading.Thread(target=self.download)
+        t.start()
