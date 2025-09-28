@@ -4,18 +4,22 @@ from yt_dlp import YoutubeDL
 from utils import format_mapping, convert_to_mp3
 
 class YouTubeDownloader:
-    def __init__(self, url, fmt="best", save_path=None):
+    def __init__(self, url, fmt="best", save_path=None, progress_hook=None):
         self.url = url
         self.fmt = fmt.lower()
         self.save_path = save_path or os.path.join(os.path.expanduser("~"), "Desktop")
         os.makedirs(self.save_path, exist_ok=True)
 
+        self.progress_hook = progress_hook
+
         self.ydl_opts = {
             "format": format_mapping(self.fmt),
             "outtmpl": os.path.join(self.save_path, "%(title)s.%(ext)s"),
             "noplaylist": True,
-            "merge_output_format": "mp4"
+            "merge_output_format": "mp4",
+            "progress_hooks": [progress_hook] if progress_hook else []
         }
+
 
     def download(self):
         print(f"YouTube download started for {self.url}")
