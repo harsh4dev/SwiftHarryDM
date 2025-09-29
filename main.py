@@ -5,12 +5,19 @@ from src.downloader import Downloader
 from src.youtube_downloader import YouTubeDownloader
 from src.playlist_downloader import PlaylistDownloader
 import os
+import re
 
 # ------------------ Globals ------------------
 download_queue = []
 paused_flags = []
 
 # ------------------ Functions ------------------
+def clean_percent(percent_str):
+    #Remove ANSI escape codes from yt-dlp percent string
+    ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
+    clean_str = ansi_escape.sub('', percent_str)
+    return int(float(clean_str.replace('%','').strip()))
+
 def add_to_queue():
     url = url_entry.get().strip()
     fmt = format_var.get()
@@ -83,7 +90,10 @@ def download_worker(idx):
 
     def progress_hook(d):
         if d['status'] == 'downloading':
-            item['progress'] = int(d['_percent_str'].replace('%',''))
+            try:
+                item['progress'] = clean_percent(d['_percent_str'])
+            except:
+                item['progress'] = 0
             update_queue_listbox(idx)
         elif d['status'] == 'finished':
             item['progress'] = 100
