@@ -3,36 +3,67 @@ class MediaDetector {
     constructor() {
         this.mediaElements = new Map();
         this.downloadButtons = new Set();
+        this.observer = null;
         this.init();
     }
 
     init() {
+        console.log('🎯 Initializing Media Detector...');
         this.detectMediaElements();
         this.setupMutationObserver();
         this.setupMessageListener();
-        this.injectDownloadButtons();
     }
 
     detectMediaElements() {
-        // Detect video elements
+        // Only detect prominent media elements
         const videos = document.querySelectorAll('video');
-        videos.forEach((video, index) => {
-            this.processVideoElement(video, `video_${index}`);
-        });
-
-        // Detect audio elements
         const audios = document.querySelectorAll('audio');
-        audios.forEach((audio, index) => {
-            this.processAudioElement(audio, `audio_${index}`);
+        
+        console.log(`🎬 Found ${videos.length} videos, ${audios.length} audios`);
+        
+        videos.forEach((video, index) => {
+            if (this.isProminentVideo(video)) {
+                this.processVideoElement(video, `video_${index}`);
+            }
         });
 
-        // Detect video links
+        audios.forEach((audio, index) => {
+            if (this.isProminentAudio(audio)) {
+                this.processAudioElement(audio, `audio_${index}`);
+            }
+        });
+
         this.detectVideoLinks();
+    }
+
+    isProminentVideo(video) {
+        // Only process videos that are likely the main content
+        const rect = video.getBoundingClientRect();
+        const isVisible = rect.width > 200 && rect.height > 150;
+        const isMainVideo = video.duration > 10 || video.currentTime > 0;
+        
+        return isVisible && (isMainVideo || this.isCentered(video));
+    }
+
+    isProminentAudio(audio) {
+        const rect = audio.getBoundingClientRect();
+        return rect.width > 100 || this.hasControls(audio);
+    }
+
+    isCentered(element) {
+        const rect = element.getBoundingClientRect();
+        const viewportCenter = window.innerWidth / 2;
+        const elementCenter = rect.left + (rect.width / 2);
+        return Math.abs(viewportCenter - elementCenter) < 200;
+    }
+
+    hasControls(element) {
+        return element.hasAttribute('controls') || element.controls;
     }
 
     processVideoElement(video, id) {
         const sources = this.getVideoSources(video);
-        if (sources.length > 0) {
+        if (sources.length > 0 && !this.mediaElements.has(id)) {
             this.mediaElements.set(id, {
                 type: 'video',
                 element: video,
@@ -47,7 +78,7 @@ class MediaDetector {
 
     processAudioElement(audio, id) {
         const sources = this.getAudioSources(audio);
-        if (sources.length > 0) {
+        if (sources.length > 0 && !this.mediaElements.has(id)) {
             this.mediaElements.set(id, {
                 type: 'audio',
                 element: audio,
@@ -145,19 +176,21 @@ class MediaDetector {
     }
 
     getVideoThumbnail(video) {
-        // Try to get poster image or create thumbnail from video
         return video.getAttribute('poster') || 
                this.createVideoThumbnail(video);
     }
 
     createVideoThumbnail(video) {
-        // Create a thumbnail from video frame
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = 160;
-        canvas.height = 90;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        return canvas.toDataURL();
+        try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 160;
+            canvas.height = 90;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL();
+        } catch (e) {
+            return null;
+        }
     }
 
     getMimeType(url) {
@@ -174,11 +207,13 @@ class MediaDetector {
     }
 
     attachDownloadButton(element, mediaId) {
-        // Check if button already exists
-        if (element.swiftharryButton) return;
+        // Remove existing button if any
+        if (element.swiftharryButton) {
+            element.swiftharryButton.remove();
+        }
 
         const button = this.createDownloadButton();
-        this.positionButton(element, button);
+        this.positionButtonNearMedia(element, button);
         
         button.addEventListener('click', (e) => {
             e.preventDefault();
@@ -188,13 +223,44 @@ class MediaDetector {
 
         element.swiftharryButton = button;
         this.downloadButtons.add(button);
+        
+        // Add hover effect to show button
+        element.addEventListener('mouseenter', () => {
+            button.style.opacity = '1';
+            button.style.transform = 'translateY(0)';
+        });
+        
+        element.addEventListener('mouseleave', () => {
+            button.style.opacity = '0.9';
+        });
     }
 
     createDownloadButton() {
         const button = document.createElement('div');
         button.className = 'swiftharry-download-btn';
+        button.style.cssText = `
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 8px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            opacity: 0.9;
+            transform: translateY(-5px);
+            pointer-events: auto;
+            z-index: 10000;
+        `;
         button.innerHTML = `
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
                 <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
             </svg>
             <span>Download</span>
@@ -202,13 +268,13 @@ class MediaDetector {
         return button;
     }
 
-    positionButton(element, button) {
-        const rect = element.getBoundingClientRect();
+    positionButtonNearMedia(mediaElement, button) {
+        const rect = mediaElement.getBoundingClientRect();
         
-        // Position button relative to the media element
-        button.style.position = 'absolute';
+        // Position button in top-right corner of media element
+        button.style.position = 'fixed';
         button.style.top = (rect.top + window.scrollY + 10) + 'px';
-        button.style.left = (rect.left + window.scrollX + 10) + 'px';
+        button.style.left = (rect.left + window.scrollX + rect.width - 130) + 'px';
         button.style.zIndex = '10000';
         
         document.body.appendChild(button);
@@ -218,11 +284,10 @@ class MediaDetector {
         const media = this.mediaElements.get(mediaId);
         if (!media) return;
 
-        // Create and show popup
         const popup = this.createDownloadPopup(media);
         document.body.appendChild(popup);
 
-        // Close popup when clicking outside
+        // Close when clicking outside
         setTimeout(() => {
             const closeHandler = (e) => {
                 if (!popup.contains(e.target)) {
@@ -237,37 +302,54 @@ class MediaDetector {
     createDownloadPopup(media) {
         const popup = document.createElement('div');
         popup.className = 'swiftharry-download-popup';
+        popup.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            z-index: 100000;
+            min-width: 350px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        `;
         
         popup.innerHTML = `
-            <div class="popup-header">
-                <h3>Download with SwiftHarryDM</h3>
-                <button class="close-btn">&times;</button>
+            <div class="popup-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 20px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 16px; font-weight: 600;">🚀 Download with SwiftHarryDM</h3>
+                <button class="close-btn" style="background: none; border: none; color: white; font-size: 20px; cursor: pointer; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">&times;</button>
             </div>
-            <div class="popup-content">
-                <div class="media-info">
-                    <strong>${media.title}</strong>
-                    ${media.duration ? `<div>Duration: ${this.formatDuration(media.duration)}</div>` : ''}
+            <div class="popup-content" style="padding: 20px;">
+                <div class="media-info" style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 6px; font-size: 14px;">
+                    <strong style="display: block; margin-bottom: 5px; color: #333;">${media.title}</strong>
+                    ${media.duration ? `<div style="color: #666;">Duration: ${this.formatDuration(media.duration)}</div>` : ''}
                 </div>
-                <div class="format-selection">
-                    <label>Download Format:</label>
-                    <select class="format-select">
+                <div class="format-selection" style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Download Format:</label>
+                    <select class="format-select" style="width: 100%; padding: 10px; border: 2px solid #e9ecef; border-radius: 6px; font-size: 14px; background: white;">
                         <option value="best">Best Quality</option>
                         <option value="1080">1080p</option>
                         <option value="720">720p</option>
                         <option value="mp3">MP3 Audio</option>
                     </select>
                 </div>
-                <button class="download-now-btn">Download Now</button>
-                <button class="add-to-queue-btn">Add to Queue</button>
+                <button class="download-now-btn" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 8px;">
+                    ⬇️ Download Now
+                </button>
+                <button class="add-to-queue-btn" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;">
+                    📥 Add to Queue
+                </button>
             </div>
         `;
 
-        // Add event listeners
         popup.querySelector('.close-btn').addEventListener('click', () => popup.remove());
+        
         popup.querySelector('.download-now-btn').addEventListener('click', () => {
             this.startDownload(media, popup.querySelector('.format-select').value, true);
             popup.remove();
         });
+        
         popup.querySelector('.add-to-queue-btn').addEventListener('click', () => {
             this.startDownload(media, popup.querySelector('.format-select').value, false);
             popup.remove();
@@ -276,7 +358,7 @@ class MediaDetector {
         return popup;
     }
 
-    startDownload(media, format, instant = false) {
+    async startDownload(media, format, instant = false) {
         const downloadData = {
             url: media.sources?.[0]?.url || media.url,
             title: media.title,
@@ -288,14 +370,84 @@ class MediaDetector {
             instantDownload: instant
         };
 
-        // Send to background script
-        chrome.runtime.sendMessage({
-            action: 'downloadMedia',
-            data: downloadData
-        });
+        console.log('📤 Starting download:', downloadData);
+
+        try {
+            const response = await chrome.runtime.sendMessage({
+                action: 'downloadMedia',
+                data: downloadData
+            });
+            
+            console.log('📥 Extension response:', response);
+            
+            if (response && response.success) {
+                this.showDownloadStartedNotification(media.title, response.queuePosition);
+            } else {
+                this.showErrorNotification(response?.error || 'Download failed');
+            }
+        } catch (error) {
+            console.error('❌ Download error:', error);
+            this.showErrorNotification('Failed to connect to SwiftHarryDM app');
+        }
+    }
+
+    showDownloadStartedNotification(title, queuePosition) {
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #10b981;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 100001;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 300px;
+        `;
+        notification.innerHTML = `
+            <div style="font-weight: 600; margin-bottom: 5px;">✅ Download Started</div>
+            <div style="font-size: 14px;">"${title}"</div>
+            <div style="font-size: 12px; opacity: 0.9;">Queue position: ${queuePosition}</div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.remove();
+        }, 4000);
+    }
+
+    showErrorNotification(message) {
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #ef4444;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 100001;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 300px;
+        `;
+        notification.innerHTML = `
+            <div style="font-weight: 600; margin-bottom: 5px;">❌ Download Failed</div>
+            <div style="font-size: 14px;">${message}</div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.remove();
+        }, 4000);
     }
 
     formatDuration(seconds) {
+        if (!seconds) return 'Unknown';
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
@@ -303,29 +455,35 @@ class MediaDetector {
 
     setupMutationObserver() {
         // Watch for new media elements added to the page
-        const observer = new MutationObserver((mutations) => {
+        this.observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1) { // Element node
-                        if (node.tagName === 'VIDEO') {
+                    if (node.nodeType === 1) {
+                        if (node.tagName === 'VIDEO' && this.isProminentVideo(node)) {
                             this.processVideoElement(node, `video_${Date.now()}`);
-                        } else if (node.tagName === 'AUDIO') {
+                        } else if (node.tagName === 'AUDIO' && this.isProminentAudio(node)) {
                             this.processAudioElement(node, `audio_${Date.now()}`);
                         }
                         
                         // Check for media elements within added node
-                        node.querySelectorAll?.('video').forEach(video => {
-                            this.processVideoElement(video, `video_${Date.now()}`);
-                        });
-                        node.querySelectorAll?.('audio').forEach(audio => {
-                            this.processAudioElement(audio, `audio_${Date.now()}`);
-                        });
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll('video').forEach(video => {
+                                if (this.isProminentVideo(video)) {
+                                    this.processVideoElement(video, `video_${Date.now()}`);
+                                }
+                            });
+                            node.querySelectorAll('audio').forEach(audio => {
+                                if (this.isProminentAudio(audio)) {
+                                    this.processAudioElement(audio, `audio_${Date.now()}`);
+                                }
+                            });
+                        }
                     }
                 });
             });
         });
 
-        observer.observe(document.body, {
+        this.observer.observe(document.body, {
             childList: true,
             subtree: true
         });
@@ -333,6 +491,8 @@ class MediaDetector {
 
     setupMessageListener() {
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+            console.log('Content script received:', request);
+            
             switch (request.action) {
                 case 'contextMenuDownload':
                     this.handleContextMenuDownload(request.context);
@@ -340,12 +500,14 @@ class MediaDetector {
                 case 'downloadPageMedia':
                     this.downloadAllMedia();
                     break;
+                case 'showMediaDetection':
+                    this.showDetectionResults();
+                    break;
             }
         });
     }
 
     handleContextMenuDownload(context) {
-        // Handle right-click context menu downloads
         if (context.mediaType === 'video' || context.mediaType === 'audio') {
             this.showMediaSelectionPopup();
         } else if (context.linkUrl) {
@@ -358,7 +520,6 @@ class MediaDetector {
     }
 
     downloadAllMedia() {
-        // Download all detected media on the page
         this.mediaElements.forEach((media, id) => {
             if (media.sources && media.sources.length > 0) {
                 this.startDownload(media, 'best', false);
@@ -366,11 +527,9 @@ class MediaDetector {
         });
     }
 
-    injectDownloadButtons() {
-        // Initial injection after page load
-        setTimeout(() => {
-            this.detectMediaElements();
-        }, 2000);
+    showDetectionResults() {
+        const count = this.mediaElements.size;
+        alert(`🎯 Found ${count} media elements on this page\nCheck the top-right corners of videos for download buttons!`);
     }
 }
 

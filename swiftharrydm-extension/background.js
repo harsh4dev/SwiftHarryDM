@@ -8,6 +8,7 @@ class BackgroundManager {
         console.log('SwiftHarryDM Extension Background Started');
         this.createContextMenu();
         this.setupMessageListener();
+        this.checkAppConnection();
     }
 
     createContextMenu() {
@@ -26,86 +27,62 @@ class BackgroundManager {
 
     setupMessageListener() {
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            switch (request.action) {
-                case 'downloadMedia':
-                    this.handleDownload(request.data, sender.tab);
-                    break;
-                case 'getAppStatus':
-                    this.checkAppStatus(sendResponse);
-                    return true;
-                case 'openApp':
-                    this.openSwiftHarryApp();
-                    break;
+            console.log('📨 Message received:', request);
+            
+            if (request.action === 'downloadMedia') {
+                this.handleDownload(request.data)
+                    .then(sendResponse);
+                return true;
+            }
+            
+            if (request.action === 'checkAppStatus') {
+                this.checkAppConnection()
+                    .then(() => sendResponse({ status: 'checked' }));
+                return true;
             }
         });
     }
 
-    async checkAppStatus(sendResponse) {
+    async checkAppConnection() {
         try {
-            const response = await fetch('http://localhost:3000/health', {
-                method: 'GET',
-                timeout: 3000
+            const response = await fetch('http://127.0.0.1:5001/health', {
+                method: 'GET'
             });
-            const data = await response.json();
-            sendResponse({ status: 'connected', data });
+            console.log('✅ App connection status:', response.status);
+            return { connected: true, status: response.status };
         } catch (error) {
-            sendResponse({ status: 'disconnected', error: error.message });
+            console.log('❌ App not running:', error.message);
+            return { connected: false, error: error.message };
         }
     }
 
-    async handleDownload(downloadData, tab) {
+    async handleDownload(downloadData) {
         try {
-            // Send download request to your app
-            const response = await this.sendToApp(downloadData);
+            console.log('📤 Sending download to app:', downloadData);
             
-            if (response.success) {
-                this.showNotification('Download Started', `Added to SwiftHarryDM queue: ${downloadData.title}`);
-            } else {
-                this.showNotification('Download Failed', 'Could not connect to SwiftHarryDM');
-            }
-        } catch (error) {
-            console.error('Download error:', error);
-            this.showNotification('Error', 'Failed to start download. Make sure SwiftHarryDM is running.');
-        }
-    }
-
-    async sendToApp(downloadData) {
-        // This will send the download request to your Python app
-        // You can use native messaging or HTTP requests
-        try {
-            const response = await fetch('http://localhost:3000/api/download', {
+            const response = await fetch('http://127.0.0.1:5001/api/download', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(downloadData)
             });
-            return await response.json();
+            
+            const result = await response.json();
+            console.log('📥 App response:', result);
+            
+            if (result.success) {
+                this.showNotification('Download Started', `Added to SwiftHarryDM: ${downloadData.title}`);
+                return { success: true, queuePosition: result.queue_position };
+            } else {
+                this.showNotification('Download Failed', result.error || 'Unknown error');
+                return { success: false, error: result.error };
+            }
         } catch (error) {
-            // Fallback: Store in local storage and notify app
-            await this.storePendingDownload(downloadData);
-            return { success: true, queued: true };
+            console.error('Download error:', error);
+            this.showNotification('Connection Failed', 'Make sure SwiftHarryDM app is running');
+            return { success: false, error: error.message };
         }
-    }
-
-    async storePendingDownload(downloadData) {
-        const pending = await this.getPendingDownloads();
-        pending.push({
-            ...downloadData,
-            timestamp: Date.now()
-        });
-        await chrome.storage.local.set({ pendingDownloads: pending });
-    }
-
-    async getPendingDownloads() {
-        const result = await chrome.storage.local.get(['pendingDownloads']);
-        return result.pendingDownloads || [];
-    }
-
-    openSwiftHarryApp() {
-        // You can implement this to open your desktop app
-        // For now, we'll just show a notification
-        this.showNotification('SwiftHarryDM', 'Please make sure the SwiftHarryDM app is running on your computer.');
     }
 
     showNotification(title, message) {

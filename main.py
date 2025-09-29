@@ -68,7 +68,10 @@ def load_local_token():
             return json.load(f)
     return None
 
-# ------------------ Extension Integration ------------------
+#--------------------Enhanced Extension Integration------------------------
+from flask import Flask, request, jsonify
+import time
+
 app = Flask(__name__)
 
 @app.after_request
@@ -94,7 +97,10 @@ def handle_download():
     
     try:
         data = request.get_json()
-        print(f"📥 Download request from extension: {data}")
+        print(f"📥 [EXTENSION] Download request received")
+        print(f"   URL: {data.get('url', 'N/A')}")
+        print(f"   Title: {data.get('title', 'N/A')}")
+        print(f"   Format: {data.get('format', 'N/A')}")
         
         url = data.get("url")
         title = data.get("title", "Unknown Title")
@@ -105,10 +111,14 @@ def handle_download():
         if not url:
             return jsonify({"success": False, "error": "No URL provided"}), 400
         
+        # Sanitize title for filename
         title = sanitize_filename(title)
+        
+        # Default save path
         save_path = os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
         os.makedirs(save_path, exist_ok=True)
         
+        # Create download item
         item = {
             "url": url, 
             "fmt": format_type, 
@@ -121,82 +131,95 @@ def handle_download():
             "added_at": datetime.now().isoformat()
         }
         
+        # Add to queue
         download_queue.append(item)
         paused_flags.append(False)
+        queue_position = len(download_queue)
         
+        # Update GUI in main thread
         root.after(0, lambda: add_extension_download_to_gui(len(download_queue)-1))
         
+        # Start download immediately if instant is True
         if instant:
             item["status"] = "Downloading"
             root.after(0, lambda: start_single_download(len(download_queue)-1))
         
-        log_text.insert(tk.END, f"✅ Added from extension: {title}\n")
+        log_text.insert(tk.END, f"✅ [EXTENSION] Added: {title}\n")
         log_text.see(tk.END)
         
         return jsonify({
             "success": True, 
             "message": "Download added to queue",
-            "queue_position": len(download_queue),
+            "queue_position": queue_position,
             "title": title,
             "format": format_type
         })
         
     except Exception as e:
-        print(f"❌ Extension download error: {e}")
-        log_text.insert(tk.END, f"❌ Extension error: {str(e)}\n")
+        error_msg = f"❌ [EXTENSION] Error: {str(e)}"
+        print(error_msg)
+        log_text.insert(tk.END, f"{error_msg}\n")
         log_text.see(tk.END)
         return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route("/api/queue", methods=["GET"])
-def get_queue_status():
-    queue_info = []
-    for idx, item in enumerate(download_queue):
-        queue_info.append({
-            "position": idx + 1,
-            "title": item.get("title", get_filename_from_url(item["url"])),
-            "status": item["status"],
-            "progress": item["progress"],
-            "format": item["fmt"]
-        })
-    
-    return jsonify({
-        "total": len(download_queue),
-        "active": len([item for item in download_queue if item["status"] == "Downloading"]),
-        "queue": queue_info
-    })
-
-@app.route("/api/stats", methods=["GET"])
-def get_app_stats():
-    return jsonify({
-        "version": CURRENT_VERSION,
-        "queue_size": len(download_queue),
-        "active_downloads": len([item for item in download_queue if item["status"] == "Downloading"]),
-        "completed_today": len([item for item in download_queue if item["status"] == "Completed" and datetime.fromisoformat(item.get("added_at", datetime.now().isoformat())).date() == datetime.now().date()])
-    })
-
 def add_extension_download_to_gui(idx):
+    """Add extension download to GUI queue"""
     if idx < len(download_queue):
         create_queue_item(idx)
+        # Auto-scroll to show new item
         queue_canvas.yview_moveto(1.0)
+        # Update queue count
+        update_queue_count()
 
 def start_single_download(idx):
+    """Start a single download from extension"""
     if idx < len(download_queue) and download_queue[idx]["status"] == "Pending":
         download_queue[idx]["status"] = "Downloading"
         update_queue_item(idx)
         threading.Thread(target=download_worker, args=(idx,), daemon=True).start()
 
 def run_flask():
+    """Run Flask server for browser extension"""
     try:
         print("🚀 Starting Flask server for browser extension on port 5001...")
-        app.run(host='127.0.0.1', port=5001, debug=False, threaded=True)
+        # Disable Flask logging for cleaner output
+        import logging
+        log = logging.getLogger('werkzeug')
+        log.setLevel(logging.ERROR)
+        
+        app.run(host='127.0.0.1', port=5001, debug=False, threaded=True, use_reloader=False)
     except Exception as e:
         print(f"❌ Flask server error: {e}")
+        # Try alternative port
         try:
-            app.run(host='127.0.0.1', port=5002, debug=False, threaded=True)
+            print("🔄 Trying port 5002...")
+            app.run(host='127.0.0.1', port=5002, debug=False, threaded=True, use_reloader=False)
         except Exception as e2:
             print(f"❌ Failed to start Flask server: {e2}")
 
+# Start Flask in background when app launches
 threading.Thread(target=run_flask, daemon=True).start()
+
+# Extension status monitoring
+def check_extension_connection():
+    """Check if browser extension can connect"""
+    try:
+        response = requests.get("http://127.0.0.1:5001/health", timeout=2)
+        if response.status_code == 200:
+            extension_status_var.set("🔌 Extension: Connected ✓")
+            extension_label.config(fg="#10b981")  # Green
+        else:
+            extension_status_var.set("🔌 Extension: Port busy")
+            extension_label.config(fg="#f59e0b")  # Orange
+    except:
+        extension_status_var.set("🔌 Extension: Not connected")
+        extension_label.config(fg="#ef4444")  # Red
+    
+    # Check again after 5 seconds
+    root.after(5000, check_extension_connection)
+
+# Start extension connection check after Flask has time to start
+    root.after(3000, check_extension_connection)
 
 # ------------------ License & Trial ------------------
 def start_trial(machine_id):

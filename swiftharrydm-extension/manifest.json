@@ -1,16 +1,16 @@
 {
   "manifest_version": 3,
   "name": "SwiftHarryDM Downloader",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Download videos and audio with SwiftHarryDM",
   "permissions": [
     "activeTab",
     "storage",
     "contextMenus",
-    "nativeMessaging"
+    "notifications"
   ],
   "host_permissions": [
-    "http://localhost:3000/*",
+    "http://localhost:5001/*",
     "https://*/*",
     "http://*/*"
   ],

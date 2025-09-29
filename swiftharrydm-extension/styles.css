@@ -15,11 +15,16 @@
     transition: all 0.3s ease;
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.2);
+    opacity: 0.9;
+    transform: translateY(-5px);
+    pointer-events: auto;
+    z-index: 10000;
 }
 
 .swiftharry-download-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    opacity: 1;
 }
 
 .swiftharry-download-btn svg {
@@ -36,7 +41,7 @@
     border-radius: 12px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     z-index: 100000;
-    min-width: 300px;
+    min-width: 350px;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     animation: popupAppear 0.3s ease;
 }
@@ -58,7 +63,7 @@
     padding: 15px 20px;
     border-radius: 12px 12px 0 0;
     display: flex;
-    justify-content: between;
+    justify-content: space-between;
     align-items: center;
 }
 
@@ -164,8 +169,8 @@
         transform: translateY(-10px);
     }
     to {
-        opacity: 1;
-        transform: translateY(0);
+        opacity: 0.9;
+        transform: translateY(-5px);
     }
 }
 
