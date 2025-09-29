@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from src.downloader import Downloader
 from utils import convert_to_mp3, format_mapping
 from yt_dlp import YoutubeDL
+from flask import Flask, request, jsonify
 
 # ------------------ Globals ------------------
 download_queue = []
@@ -65,6 +66,25 @@ def load_local_token():
         with open(TOKEN_FILE, "r") as f:
             return json.load(f)
     return None
+
+#--------------------Extension------------------------
+app = Flask(__name__)
+
+@app.route("/capture", methods=["POST"])
+def capture():
+    data = request.get_json()
+    url = data.get("url")
+    if url:
+        # Yaha queue me add kar do
+        download_queue.append({"url": url, "fmt": "best", "save_path": os.path.join(os.path.expanduser("~"), "Desktop"), "status": "Pending", "progress": 0})
+        return jsonify({"status": "ok", "message": f"Captured {url}"})
+    return jsonify({"status": "error", "message": "No URL"}), 400
+
+def run_flask():
+    app.run(port=5001)
+
+# Start Flask in background when app launches
+threading.Thread(target=run_flask, daemon=True).start()
 
 # ------------------ License & Trial ------------------
 def start_trial(machine_id):
