@@ -50,7 +50,12 @@ def clean_percent(percent_str):
         return 0
 
 def sanitize_filename(name):
-    return re.sub(r'[<>:"/\\|?*]', '_', name)
+    # More comprehensive sanitization
+    name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    name = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', name)  # Remove control characters
+    name = name.strip().strip('.')  # Remove leading/trailing spaces and dots
+    name = name[:200]  # Limit length
+    return name if name else "download"
 
 def get_filename_from_url(url):
     return sanitize_filename(url.split('/')[-1])
@@ -69,9 +74,6 @@ def load_local_token():
     return None
 
 #--------------------Enhanced Extension Integration------------------------
-from flask import Flask, request, jsonify
-import time
-
 app = Flask(__name__)
 
 # Enable CORS properly
@@ -108,7 +110,6 @@ def handle_download():
         url = data.get("url")
         title = data.get("title", "Unknown Title")
         format_type = data.get("format", "best")
-        instant = data.get("instantDownload", False)
         page_url = data.get("pageUrl", "")
         
         if not url:
@@ -121,12 +122,12 @@ def handle_download():
         save_path = os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
         os.makedirs(save_path, exist_ok=True)
         
-        # Create download item
+        # Create download item - AUTO START ALL EXTENSION DOWNLOADS
         item = {
             "url": url, 
             "fmt": format_type, 
             "save_path": save_path, 
-            "status": "Pending", 
+            "status": "Downloading",  # Changed from "Pending" to "Downloading"
             "progress": 0,
             "title": title,
             "source": "extension",
@@ -139,20 +140,18 @@ def handle_download():
         paused_flags.append(False)
         queue_position = len(download_queue)
         
-        # Update GUI in main thread
-        root.after(0, lambda: add_extension_download_to_gui(len(download_queue)-1))
+        # Update GUI in main thread - FIXED with proper lambda
+        root.after(0, lambda idx=len(download_queue)-1: add_extension_download_to_gui(idx))
         
-        # Start download immediately if instant is True
-        if instant:
-            item["status"] = "Downloading"
-            root.after(0, lambda: start_single_download(len(download_queue)-1))
+        # AUTO START DOWNLOAD for all extension requests
+        root.after(100, lambda idx=len(download_queue)-1: start_extension_download(idx))
         
-        log_text.insert(tk.END, f"✅ [EXTENSION] Added: {title}\n")
+        log_text.insert(tk.END, f"✅ [EXTENSION] Added and started: {title}\n")
         log_text.see(tk.END)
         
         return jsonify({
             "success": True, 
-            "message": "Download added to queue",
+            "message": "Download added to queue and started",
             "queue_position": queue_position,
             "title": title,
             "format": format_type
@@ -194,12 +193,21 @@ def add_extension_download_to_gui(idx):
         queue_canvas.yview_moveto(1.0)
         # Update queue count
         update_queue_count()
+        
+        # Log the addition
+        item = download_queue[idx]
+        log_text.insert(tk.END, f"📥 [EXTENSION] Added to queue: {item['title']} ({item['fmt']})\n")
+        log_text.see(tk.END)
+        
+        print(f"✅ [EXTENSION] Added to GUI: {item['title']} at index {idx}")
 
-def start_single_download(idx):
-    """Start a single download from extension"""
-    if idx < len(download_queue) and download_queue[idx]["status"] == "Pending":
-        download_queue[idx]["status"] = "Downloading"
+def start_extension_download(idx):
+    """Start download for extension-added items"""
+    if idx < len(download_queue) and download_queue[idx]["status"] == "Downloading":
+        print(f"🚀 [EXTENSION] Starting download for index {idx}: {download_queue[idx]['title']}")
+        # Update the GUI first
         update_queue_item(idx)
+        # Then start the download worker
         threading.Thread(target=download_worker, args=(idx,), daemon=True).start()
 
 def run_flask():
@@ -236,27 +244,6 @@ def run_flask():
 
 # Start Flask in background when app launches
 threading.Thread(target=run_flask, daemon=True).start()
-
-# Extension status monitoring
-def check_extension_connection():
-    """Check if browser extension can connect"""
-    try:
-        response = requests.get("http://127.0.0.1:5001/health", timeout=2)
-        if response.status_code == 200:
-            extension_status_var.set("🔌 Extension: Connected ✓")
-            extension_label.config(fg="#10b981")  # Green
-        else:
-            extension_status_var.set("🔌 Extension: Port busy")
-            extension_label.config(fg="#f59e0b")  # Orange
-    except:
-        extension_status_var.set("🔌 Extension: Not connected")
-        extension_label.config(fg="#ef4444")  # Red
-    
-    # Check again after 5 seconds
-    root.after(5000, check_extension_connection)
-
-# Start extension connection check after Flask has time to start
-    root.after(3000, check_extension_connection)
 
 # ------------------ License & Trial ------------------
 def start_trial(machine_id):
@@ -614,26 +601,124 @@ class UniversalDownloader:
         self.save_path = save_path or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
         os.makedirs(self.save_path, exist_ok=True)
         self.progress_hook = progress_hook
+        print(f"🔧 [DOWNLOADER] Initialized: {url} -> {fmt} -> {self.save_path}")
 
     def download(self):
         try:
+            print(f"🔧 [DOWNLOADER] Starting yt-dlp download...")
+            
+            # Enhanced options for better compatibility
             opts = {
                 "format": format_mapping(self.fmt),
                 "outtmpl": os.path.join(self.save_path, "%(title)s.%(ext)s"),
                 "progress_hooks": [self.progress_hook] if self.progress_hook else [],
                 "merge_output_format": "mp4",
-                "noplaylist": False
+                "noplaylist": False,
+                "ignoreerrors": True,  # Continue on download errors
+                "retries": 10,  # Increase retries
+                "fragment_retries": 10,
+                "skip_unavailable_fragments": True,
             }
+            
+            # Special handling for problematic sites
+            if "facebook.com" in self.url:
+                print("🔧 [DOWNLOADER] Facebook detected - adding special options")
+                opts.update({
+                    "cookiefile": None,  # Try without cookies first
+                })
+            
             with YoutubeDL(opts) as ydl:
+                print(f"🔧 [DOWNLOADER] Extracting info for: {self.url}")
                 info = ydl.extract_info(self.url, download=True)
+                
+                if not info:
+                    raise Exception("Failed to extract video information")
+                    
                 filename = ydl.prepare_filename(info)
+                print(f"🔧 [DOWNLOADER] Filename: {filename}")
+                
                 if self.fmt.lower() == "mp3":
+                    print(f"🔧 [DOWNLOADER] Converting to MP3...")
                     convert_to_mp3(filename, os.path.splitext(filename)[0]+".mp3")
+                    
         except Exception as e:
+            print(f"❌ [DOWNLOADER] yt-dlp failed: {e}")
+            
+            # Enhanced fallback with better error handling
             if self.url.startswith("http"):
-                Downloader(self.url, self.save_path).download()
+                print(f"🔧 [DOWNLOADER] Falling back to enhanced downloader")
+                self.fallback_download()
             else:
                 raise e
+
+    def fallback_download(self):
+        """Enhanced fallback downloader with better filename handling"""
+        try:
+            import urllib.parse
+            from pathlib import Path
+            
+            # Create a safe filename from URL
+            parsed_url = urllib.parse.urlparse(self.url)
+            if "facebook.com" in self.url:
+                # Extract video ID from Facebook URL
+                video_id = None
+                if "v=" in self.url:
+                    video_id = self.url.split("v=")[-1].split("&")[0]
+                elif "video/" in self.url:
+                    video_id = self.url.split("video/")[-1].split("/")[0]
+                
+                if video_id and video_id.isdigit():
+                    filename = f"facebook_video_{video_id}.mp4"
+                else:
+                    filename = "facebook_video.mp4"
+            else:
+                # Generic filename from URL
+                path = Path(parsed_url.path)
+                if path.name and path.suffix:
+                    filename = path.name
+                else:
+                    filename = "downloaded_video.mp4"
+            
+            # Sanitize filename
+            filename = sanitize_filename(filename)
+            filepath = os.path.join(self.save_path, filename)
+            
+            print(f"🔧 [FALLBACK] Downloading to: {filepath}")
+            
+            # Use requests with stream for basic download
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            response = requests.get(self.url, headers=headers, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Update progress if hook exists
+                        if self.progress_hook and total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            # Simulate progress update
+                            fake_info = {
+                                'status': 'downloading',
+                                '_percent_str': f'{percent:.1f}%',
+                                'total_bytes': total_size,
+                                'downloaded_bytes': downloaded
+                            }
+                            self.progress_hook(fake_info)
+            
+            print(f"✅ [FALLBACK] Download completed: {filepath}")
+            
+        except Exception as fallback_error:
+            print(f"❌ [FALLBACK] Fallback download also failed: {fallback_error}")
+            raise fallback_error
 
 # ------------------ Queue Functions ------------------
 def add_to_queue():
@@ -789,23 +874,34 @@ def clear_completed():
 
 def download_worker(idx):
     if idx >= len(download_queue):
+        print(f"❌ [WORKER] Index {idx} out of range!")
         return
         
     item = download_queue[idx]
     url, fmt, save_path = item["url"], item["fmt"], item["save_path"]
     title = item.get("title", get_filename_from_url(url))
 
+    print(f"🔧 [WORKER] Starting download worker for: {title}")
+    print(f"🔧 [WORKER] URL: {url}")
+    print(f"🔧 [WORKER] Format: {fmt}")
+    print(f"🔧 [WORKER] Save path: {save_path}")
+
     def progress_hook(d):
         if d['status'] == 'downloading':
             item['progress'] = clean_percent(d.get('_percent_str','0%'))
             update_queue_item(idx)
+            # Debug progress
+            if item['progress'] % 20 == 0:  # Log every 20%
+                print(f"📊 [WORKER] Progress: {item['progress']}% - {title}")
         elif d['status'] == 'finished':
             item['progress'] = 100
             update_queue_item(idx)
+            print(f"✅ [WORKER] Download finished: {title}")
 
     try:
         log_text.insert(tk.END, f"🚀 Starting download: {title}\n")
         log_text.see(tk.END)
+        print(f"🎯 [WORKER] Calling UniversalDownloader for: {title}")
         
         downloader = UniversalDownloader(url, fmt, save_path, progress_hook)
         downloader.download()
@@ -815,6 +911,7 @@ def download_worker(idx):
         success_msg = f"✅ Download completed: {title}\n"
         log_text.insert(tk.END, success_msg)
         log_text.see(tk.END)
+        print(f"🎉 [WORKER] Download successful: {title}")
         
     except Exception as e:
         item["status"] = "Error"
@@ -822,6 +919,9 @@ def download_worker(idx):
         error_msg = f"❌ Download failed: {title} - {str(e)}\n"
         log_text.insert(tk.END, error_msg)
         log_text.see(tk.END)
+        print(f"💥 [WORKER] Download failed: {title} - Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 # ------------------ Modern GUI ------------------
 root = tk.Tk()
@@ -1025,15 +1125,20 @@ def check_extension_connection():
         response = requests.get("http://127.0.0.1:5001/health", timeout=2)
         if response.status_code == 200:
             extension_status_var.set("🔌 Extension: Connected ✓")
+            extension_label.config(fg="#10b981")  # Green
         else:
-            extension_status_var.set("🔌 Extension: Port 5001 busy")
+            extension_status_var.set("🔌 Extension: Port busy")
+            extension_label.config(fg="#f59e0b")  # Orange
     except:
         extension_status_var.set("🔌 Extension: Not connected")
+        extension_label.config(fg="#ef4444")  # Red
+    
+    # Check again after 5 seconds
     root.after(5000, check_extension_connection)
 
 # ------------------ Initialize App ------------------
 auto_update_check()
-root.after(2000, check_extension_connection)
+root.after(3000, check_extension_connection)
 root.after(1000, update_queue_count)
 
 # Check trial/license at startup

@@ -2,3 +2,4 @@ requests
 tqdm
 youtube-dl
 yt-dlp
+flask
