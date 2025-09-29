@@ -74,6 +74,7 @@ import time
 
 app = Flask(__name__)
 
+# Enable CORS properly
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -81,8 +82,10 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-@app.route("/health", methods=["GET"])
+@app.route("/health", methods=["GET", "OPTIONS"])
 def health_check():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"})
     return jsonify({
         "status": "running", 
         "app": "SwiftHarryDM",
@@ -162,6 +165,27 @@ def handle_download():
         log_text.see(tk.END)
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route("/api/queue", methods=["GET", "OPTIONS"])
+def get_queue_status():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"})
+    
+    queue_info = []
+    for idx, item in enumerate(download_queue):
+        queue_info.append({
+            "position": idx + 1,
+            "title": item.get("title", get_filename_from_url(item["url"])),
+            "status": item["status"],
+            "progress": item["progress"],
+            "format": item["fmt"]
+        })
+    
+    return jsonify({
+        "total": len(download_queue),
+        "active": len([item for item in download_queue if item["status"] == "Downloading"]),
+        "queue": queue_info
+    })
+
 def add_extension_download_to_gui(idx):
     """Add extension download to GUI queue"""
     if idx < len(download_queue):
@@ -187,13 +211,26 @@ def run_flask():
         log = logging.getLogger('werkzeug')
         log.setLevel(logging.ERROR)
         
-        app.run(host='127.0.0.1', port=5001, debug=False, threaded=True, use_reloader=False)
+        # Use these settings for better compatibility
+        app.run(
+            host='127.0.0.1', 
+            port=5001, 
+            debug=False, 
+            threaded=True, 
+            use_reloader=False
+        )
     except Exception as e:
-        print(f"❌ Flask server error: {e}")
+        print(f"❌ Flask server error on port 5001: {e}")
         # Try alternative port
         try:
             print("🔄 Trying port 5002...")
-            app.run(host='127.0.0.1', port=5002, debug=False, threaded=True, use_reloader=False)
+            app.run(
+                host='127.0.0.1', 
+                port=5002, 
+                debug=False, 
+                threaded=True, 
+                use_reloader=False
+            )
         except Exception as e2:
             print(f"❌ Failed to start Flask server: {e2}")
 

@@ -1,6 +1,7 @@
-// background.js
+// background.js - FIXED CONNECTION VERSION
 class BackgroundManager {
     constructor() {
+        this.appPort = 5001; // Default port
         this.init();
     }
 
@@ -8,7 +9,32 @@ class BackgroundManager {
         console.log('SwiftHarryDM Extension Background Started');
         this.createContextMenu();
         this.setupMessageListener();
-        this.checkAppConnection();
+        this.findAppPort(); // Try to find which port the app is using
+    }
+
+    async findAppPort() {
+        // Try both possible ports
+        const ports = [5001, 5002];
+        for (const port of ports) {
+            const connected = await this.testPort(port);
+            if (connected) {
+                this.appPort = port;
+                console.log(`✅ App found on port ${port}`);
+                break;
+            }
+        }
+    }
+
+    async testPort(port) {
+        try {
+            const response = await fetch(`http://127.0.0.1:${port}/health`, {
+                method: 'GET',
+                timeout: 2000
+            });
+            return response.status === 200;
+        } catch (error) {
+            return false;
+        }
     }
 
     createContextMenu() {
@@ -26,41 +52,50 @@ class BackgroundManager {
     }
 
     setupMessageListener() {
+        // Add this to the setupMessageListener function in background.js
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             console.log('📨 Message received:', request);
-            
+    
             if (request.action === 'downloadMedia') {
-                this.handleDownload(request.data)
-                    .then(sendResponse);
+            this.handleDownload(request.data)
+            .then(sendResponse);
                 return true;
             }
-            
+    
             if (request.action === 'checkAppStatus') {
                 this.checkAppConnection()
-                    .then(() => sendResponse({ status: 'checked' }));
-                return true;
+                .then((result) => sendResponse(result));
+            return true;
+            }
+    
+        // ADD THIS NEW HANDLER:
+        if (request.action === 'openApp') {
+            this.showNotification('SwiftHarryDM', 'The app should be running on your desktop. If not, please launch it manually.');
+            sendResponse({ success: true });
+            return true;
             }
         });
     }
 
     async checkAppConnection() {
         try {
-            const response = await fetch('http://127.0.0.1:5001/health', {
-                method: 'GET'
-            });
-            console.log('✅ App connection status:', response.status);
-            return { connected: true, status: response.status };
+            const response = await fetch(`http://127.0.0.1:${this.appPort}/health`);
+            if (response.status === 200) {
+                return { connected: true, port: this.appPort };
+            }
         } catch (error) {
-            console.log('❌ App not running:', error.message);
-            return { connected: false, error: error.message };
+            // Try to find the correct port again
+            await this.findAppPort();
         }
+        
+        return { connected: false, error: 'App not running' };
     }
 
     async handleDownload(downloadData) {
         try {
-            console.log('📤 Sending download to app:', downloadData);
+            console.log('📤 Sending download to app on port:', this.appPort);
             
-            const response = await fetch('http://127.0.0.1:5001/api/download', {
+            const response = await fetch(`http://127.0.0.1:${this.appPort}/api/download`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -68,12 +103,20 @@ class BackgroundManager {
                 body: JSON.stringify(downloadData)
             });
             
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
             const result = await response.json();
             console.log('📥 App response:', result);
             
             if (result.success) {
                 this.showNotification('Download Started', `Added to SwiftHarryDM: ${downloadData.title}`);
-                return { success: true, queuePosition: result.queue_position };
+                return { 
+                    success: true, 
+                    queuePosition: result.queue_position,
+                    message: result.message 
+                };
             } else {
                 this.showNotification('Download Failed', result.error || 'Unknown error');
                 return { success: false, error: result.error };

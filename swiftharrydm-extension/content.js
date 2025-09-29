@@ -1,4 +1,4 @@
-// content.js
+// content.js - FIXED VERSION (Buttons Always Appear)
 class MediaDetector {
     constructor() {
         this.mediaElements = new Map();
@@ -8,85 +8,76 @@ class MediaDetector {
     }
 
     init() {
-        console.log('🎯 Initializing Media Detector...');
-        this.detectMediaElements();
+        console.log('🎯 SwiftHarryDM Media Detector Started');
+        this.detectAllMedia();
         this.setupMutationObserver();
         this.setupMessageListener();
+        this.setupPeriodicScan();
     }
 
-    detectMediaElements() {
-        // Only detect prominent media elements
+    detectAllMedia() {
+        console.log('🔍 Scanning for media elements...');
+        
+        // Clear previous
+        this.mediaElements.clear();
+        this.downloadButtons.forEach(btn => btn.remove());
+        this.downloadButtons.clear();
+
+        // Detect ALL videos and audios (no filters)
         const videos = document.querySelectorAll('video');
         const audios = document.querySelectorAll('audio');
         
         console.log(`🎬 Found ${videos.length} videos, ${audios.length} audios`);
         
         videos.forEach((video, index) => {
-            if (this.isProminentVideo(video)) {
-                this.processVideoElement(video, `video_${index}`);
-            }
+            this.processVideoElement(video, `video_${index}`);
         });
 
         audios.forEach((audio, index) => {
-            if (this.isProminentAudio(audio)) {
-                this.processAudioElement(audio, `audio_${index}`);
-            }
+            this.processAudioElement(audio, `audio_${index}`);
         });
 
         this.detectVideoLinks();
-    }
-
-    isProminentVideo(video) {
-        // Only process videos that are likely the main content
-        const rect = video.getBoundingClientRect();
-        const isVisible = rect.width > 200 && rect.height > 150;
-        const isMainVideo = video.duration > 10 || video.currentTime > 0;
         
-        return isVisible && (isMainVideo || this.isCentered(video));
-    }
-
-    isProminentAudio(audio) {
-        const rect = audio.getBoundingClientRect();
-        return rect.width > 100 || this.hasControls(audio);
-    }
-
-    isCentered(element) {
-        const rect = element.getBoundingClientRect();
-        const viewportCenter = window.innerWidth / 2;
-        const elementCenter = rect.left + (rect.width / 2);
-        return Math.abs(viewportCenter - elementCenter) < 200;
-    }
-
-    hasControls(element) {
-        return element.hasAttribute('controls') || element.controls;
+        console.log(`✅ Attached ${this.downloadButtons.size} download buttons`);
     }
 
     processVideoElement(video, id) {
-        const sources = this.getVideoSources(video);
-        if (sources.length > 0 && !this.mediaElements.has(id)) {
-            this.mediaElements.set(id, {
-                type: 'video',
-                element: video,
-                sources: sources,
-                title: this.getMediaTitle(video) || document.title,
-                thumbnail: this.getVideoThumbnail(video),
-                duration: video.duration || null
-            });
-            this.attachDownloadButton(video, id);
+        try {
+            const sources = this.getVideoSources(video);
+            if (sources.length > 0 || video.src) {
+                this.mediaElements.set(id, {
+                    type: 'video',
+                    element: video,
+                    sources: sources,
+                    title: this.getMediaTitle(video) || document.title,
+                    thumbnail: video.getAttribute('poster'),
+                    duration: video.duration || null,
+                    url: video.src || window.location.href
+                });
+                this.attachDownloadButton(video, id);
+            }
+        } catch (error) {
+            console.log('Error processing video:', error);
         }
     }
 
     processAudioElement(audio, id) {
-        const sources = this.getAudioSources(audio);
-        if (sources.length > 0 && !this.mediaElements.has(id)) {
-            this.mediaElements.set(id, {
-                type: 'audio',
-                element: audio,
-                sources: sources,
-                title: this.getMediaTitle(audio) || document.title,
-                duration: audio.duration || null
-            });
-            this.attachDownloadButton(audio, id);
+        try {
+            const sources = this.getAudioSources(audio);
+            if (sources.length > 0 || audio.src) {
+                this.mediaElements.set(id, {
+                    type: 'audio',
+                    element: audio,
+                    sources: sources,
+                    title: this.getMediaTitle(audio) || document.title,
+                    duration: audio.duration || null,
+                    url: audio.src || window.location.href
+                });
+                this.attachDownloadButton(audio, id);
+            }
+        } catch (error) {
+            console.log('Error processing audio:', error);
         }
     }
 
@@ -113,6 +104,15 @@ class MediaDetector {
             }
         });
 
+        // If no direct sources, use the page URL (for YouTube, etc.)
+        if (sources.length === 0) {
+            sources.push({
+                url: window.location.href,
+                quality: 'best',
+                type: 'video'
+            });
+        }
+
         return sources;
     }
 
@@ -137,63 +137,31 @@ class MediaDetector {
             }
         });
 
+        // If no direct sources, use the page URL
+        if (sources.length === 0) {
+            sources.push({
+                url: window.location.href,
+                quality: 'best',
+                type: 'audio'
+            });
+        }
+
         return sources;
     }
 
-    detectVideoLinks() {
-        // Detect common video hosting patterns
-        const patterns = [
-            /\.(mp4|webm|ogg|mov|avi|mkv|flv|wmv|m4v|3gp)(\?|$)/i,
-            /youtube\.com\/watch\?v=/i,
-            /youtu\.be\//i,
-            /vimeo\.com\//i,
-            /dailymotion\.com\//i,
-            /twitch\.tv\//i
-        ];
-
-        const links = document.querySelectorAll('a[href]');
-        links.forEach((link, index) => {
-            const href = link.href;
-            if (patterns.some(pattern => pattern.test(href))) {
-                const id = `link_${index}`;
-                this.mediaElements.set(id, {
-                    type: 'video_link',
-                    element: link,
-                    url: href,
-                    title: link.textContent || link.title || 'Video Link',
-                    isDirectLink: true
-                });
-                this.attachDownloadButton(link, id);
-            }
-        });
-    }
-
     getMediaTitle(mediaElement) {
-        return mediaElement.getAttribute('title') || 
-               mediaElement.getAttribute('alt') ||
-               mediaElement.getAttribute('aria-label') ||
-               document.title;
-    }
-
-    getVideoThumbnail(video) {
-        return video.getAttribute('poster') || 
-               this.createVideoThumbnail(video);
-    }
-
-    createVideoThumbnail(video) {
-        try {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = 160;
-            canvas.height = 90;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            return canvas.toDataURL();
-        } catch (e) {
-            return null;
-        }
+        // Try multiple methods to get title
+        const title = mediaElement.getAttribute('title') || 
+                     mediaElement.getAttribute('alt') ||
+                     mediaElement.getAttribute('aria-label') ||
+                     document.title ||
+                     'Media Download';
+        
+        return title.substring(0, 100); // Limit length
     }
 
     getMimeType(url) {
+        if (!url) return 'unknown';
         const ext = url.split('.').pop().split('?')[0].toLowerCase();
         const mimeTypes = {
             'mp4': 'video/mp4',
@@ -213,7 +181,7 @@ class MediaDetector {
         }
 
         const button = this.createDownloadButton();
-        this.positionButtonNearMedia(element, button);
+        this.positionButtonOnMedia(element, button);
         
         button.addEventListener('click', (e) => {
             e.preventDefault();
@@ -224,15 +192,11 @@ class MediaDetector {
         element.swiftharryButton = button;
         this.downloadButtons.add(button);
         
-        // Add hover effect to show button
-        element.addEventListener('mouseenter', () => {
+        // Make button more visible
+        setTimeout(() => {
             button.style.opacity = '1';
             button.style.transform = 'translateY(0)';
-        });
-        
-        element.addEventListener('mouseleave', () => {
-            button.style.opacity = '0.9';
-        });
+        }, 100);
     }
 
     createDownloadButton() {
@@ -254,10 +218,11 @@ class MediaDetector {
             transition: all 0.3s ease;
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
-            opacity: 0.9;
-            transform: translateY(-5px);
+            opacity: 0;
+            transform: translateY(-10px);
             pointer-events: auto;
             z-index: 10000;
+            position: fixed;
         `;
         button.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
@@ -268,33 +233,54 @@ class MediaDetector {
         return button;
     }
 
-    positionButtonNearMedia(mediaElement, button) {
-        const rect = mediaElement.getBoundingClientRect();
-        
-        // Position button in top-right corner of media element
-        button.style.position = 'fixed';
-        button.style.top = (rect.top + window.scrollY + 10) + 'px';
-        button.style.left = (rect.left + window.scrollX + rect.width - 130) + 'px';
-        button.style.zIndex = '10000';
-        
+    positionButtonOnMedia(mediaElement, button) {
+        const updatePosition = () => {
+            const rect = mediaElement.getBoundingClientRect();
+            const scrollX = window.scrollX || window.pageXOffset;
+            const scrollY = window.scrollY || window.pageYOffset;
+            
+            if (rect.width > 0 && rect.height > 0 && 
+                rect.top < window.innerHeight && rect.bottom > 0) {
+                
+                // Position in top-right corner of media element
+                button.style.top = (rect.top + scrollY + 10) + 'px';
+                button.style.left = (rect.left + scrollX + rect.width - 120) + 'px';
+                button.style.display = 'block';
+                
+                console.log(`📍 Button positioned at: ${button.style.top}, ${button.style.left}`);
+            } else {
+                button.style.display = 'none';
+            }
+        };
+
+        updatePosition();
         document.body.appendChild(button);
+
+        // Update position frequently
+        const positionInterval = setInterval(updatePosition, 500);
+        
+        // Cleanup when button is removed
+        button.dataset.intervalId = positionInterval;
     }
 
     showDownloadPopup(mediaId) {
         const media = this.mediaElements.get(mediaId);
-        if (!media) return;
+        if (!media) {
+            this.showErrorNotification('Media not found');
+            return;
+        }
 
         const popup = this.createDownloadPopup(media);
         document.body.appendChild(popup);
 
-        // Close when clicking outside
+        const closeHandler = (e) => {
+            if (!popup.contains(e.target)) {
+                popup.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        
         setTimeout(() => {
-            const closeHandler = (e) => {
-                if (!popup.contains(e.target)) {
-                    popup.remove();
-                    document.removeEventListener('click', closeHandler);
-                }
-            };
             document.addEventListener('click', closeHandler);
         }, 100);
     }
@@ -313,7 +299,21 @@ class MediaDetector {
             z-index: 100000;
             min-width: 350px;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            animation: popupAppear 0.3s ease;
         `;
+        
+        // Add CSS animation
+        if (!document.querySelector('#swiftharry-animations')) {
+            const style = document.createElement('style');
+            style.id = 'swiftharry-animations';
+            style.textContent = `
+                @keyframes popupAppear {
+                    from { opacity: 0; transform: translate(-50%, -40%); }
+                    to { opacity: 1; transform: translate(-50%, -50%); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
         
         popup.innerHTML = `
             <div class="popup-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 20px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center;">
@@ -324,6 +324,7 @@ class MediaDetector {
                 <div class="media-info" style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 6px; font-size: 14px;">
                     <strong style="display: block; margin-bottom: 5px; color: #333;">${media.title}</strong>
                     ${media.duration ? `<div style="color: #666;">Duration: ${this.formatDuration(media.duration)}</div>` : ''}
+                    <div style="color: #666; font-size: 12px; margin-top: 5px;">Source: ${media.sources?.[0]?.url ? 'Direct' : 'Page URL'}</div>
                 </div>
                 <div class="format-selection" style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Download Format:</label>
@@ -334,10 +335,10 @@ class MediaDetector {
                         <option value="mp3">MP3 Audio</option>
                     </select>
                 </div>
-                <button class="download-now-btn" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 8px;">
+                <button class="download-now-btn" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 8px; transition: all 0.3s;">
                     ⬇️ Download Now
                 </button>
-                <button class="add-to-queue-btn" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;">
+                <button class="add-to-queue-btn" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s;">
                     📥 Add to Queue
                 </button>
             </div>
@@ -355,12 +356,33 @@ class MediaDetector {
             popup.remove();
         });
 
+        // Add hover effects
+        const downloadBtn = popup.querySelector('.download-now-btn');
+        const queueBtn = popup.querySelector('.add-to-queue-btn');
+        
+        downloadBtn.addEventListener('mouseenter', () => {
+            downloadBtn.style.transform = 'translateY(-1px)';
+        });
+        downloadBtn.addEventListener('mouseleave', () => {
+            downloadBtn.style.transform = 'translateY(0)';
+        });
+        
+        queueBtn.addEventListener('mouseenter', () => {
+            queueBtn.style.transform = 'translateY(-1px)';
+        });
+        queueBtn.addEventListener('mouseleave', () => {
+            queueBtn.style.transform = 'translateY(0)';
+        });
+
         return popup;
     }
 
     async startDownload(media, format, instant = false) {
+        // Use the first source URL or fallback to page URL
+        const downloadUrl = media.sources?.[0]?.url || media.url || window.location.href;
+        
         const downloadData = {
-            url: media.sources?.[0]?.url || media.url,
+            url: downloadUrl,
             title: media.title,
             format: format,
             type: media.type,
@@ -381,51 +403,40 @@ class MediaDetector {
             console.log('📥 Extension response:', response);
             
             if (response && response.success) {
-                this.showDownloadStartedNotification(media.title, response.queuePosition);
+                this.showSuccessNotification(media.title, response.queuePosition);
             } else {
                 this.showErrorNotification(response?.error || 'Download failed');
             }
         } catch (error) {
             console.error('❌ Download error:', error);
-            this.showErrorNotification('Failed to connect to SwiftHarryDM app');
+            this.showErrorNotification('Make sure SwiftHarryDM app is running');
         }
     }
 
-    showDownloadStartedNotification(title, queuePosition) {
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #10b981;
-            color: white;
-            padding: 15px 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            z-index: 100001;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 300px;
-        `;
-        notification.innerHTML = `
-            <div style="font-weight: 600; margin-bottom: 5px;">✅ Download Started</div>
-            <div style="font-size: 14px;">"${title}"</div>
-            <div style="font-size: 12px; opacity: 0.9;">Queue position: ${queuePosition}</div>
-        `;
-        
-        document.body.appendChild(notification);
-        
-        setTimeout(() => {
-            notification.remove();
-        }, 4000);
+    showSuccessNotification(title, queuePosition) {
+        this.showNotification(
+            '✅ Download Started', 
+            `"${title}" - Queue: ${queuePosition}`, 
+            '#10b981'
+        );
     }
 
     showErrorNotification(message) {
+        this.showNotification('❌ Download Failed', message, '#ef4444');
+    }
+
+    showNotification(title, message, color) {
+        // Remove existing notification
+        const existing = document.getElementById('swiftharry-notification');
+        if (existing) existing.remove();
+
         const notification = document.createElement('div');
+        notification.id = 'swiftharry-notification';
         notification.style.cssText = `
             position: fixed;
             top: 20px;
             right: 20px;
-            background: #ef4444;
+            background: ${color};
             color: white;
             padding: 15px 20px;
             border-radius: 8px;
@@ -433,60 +444,94 @@ class MediaDetector {
             z-index: 100001;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             max-width: 300px;
+            animation: slideIn 0.3s ease;
         `;
+        
+        // Add slideIn animation
+        if (!document.querySelector('#swiftharry-notification-animations')) {
+            const style = document.createElement('style');
+            style.id = 'swiftharry-notification-animations';
+            style.textContent = `
+                @keyframes slideIn {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
         notification.innerHTML = `
-            <div style="font-weight: 600; margin-bottom: 5px;">❌ Download Failed</div>
+            <div style="font-weight: 600; margin-bottom: 5px;">${title}</div>
             <div style="font-size: 14px;">${message}</div>
         `;
         
         document.body.appendChild(notification);
         
         setTimeout(() => {
-            notification.remove();
+            if (notification.parentNode) {
+                notification.remove();
+            }
         }, 4000);
     }
 
     formatDuration(seconds) {
-        if (!seconds) return 'Unknown';
+        if (!seconds || isNaN(seconds)) return 'Unknown';
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
     setupMutationObserver() {
-        // Watch for new media elements added to the page
         this.observer = new MutationObserver((mutations) => {
+            let shouldRescan = false;
+            
             mutations.forEach((mutation) => {
+                // Check for added nodes
                 mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1) {
-                        if (node.tagName === 'VIDEO' && this.isProminentVideo(node)) {
-                            this.processVideoElement(node, `video_${Date.now()}`);
-                        } else if (node.tagName === 'AUDIO' && this.isProminentAudio(node)) {
-                            this.processAudioElement(node, `audio_${Date.now()}`);
+                    if (node.nodeType === 1) { // Element node
+                        if (node.tagName === 'VIDEO' || node.tagName === 'AUDIO') {
+                            shouldRescan = true;
                         }
-                        
-                        // Check for media elements within added node
                         if (node.querySelectorAll) {
-                            node.querySelectorAll('video').forEach(video => {
-                                if (this.isProminentVideo(video)) {
-                                    this.processVideoElement(video, `video_${Date.now()}`);
-                                }
-                            });
-                            node.querySelectorAll('audio').forEach(audio => {
-                                if (this.isProminentAudio(audio)) {
-                                    this.processAudioElement(audio, `audio_${Date.now()}`);
-                                }
-                            });
+                            const mediaElements = node.querySelectorAll('video, audio');
+                            if (mediaElements.length > 0) {
+                                shouldRescan = true;
+                            }
                         }
                     }
                 });
+                
+                // Check for attribute changes (like when video becomes visible)
+                if (mutation.type === 'attributes') {
+                    if (mutation.target.tagName === 'VIDEO' || mutation.target.tagName === 'AUDIO') {
+                        shouldRescan = true;
+                    }
+                }
             });
+            
+            if (shouldRescan) {
+                console.log('🔄 DOM changed, rescanning for media...');
+                setTimeout(() => this.detectAllMedia(), 1000);
+            }
         });
 
         this.observer.observe(document.body, {
             childList: true,
-            subtree: true
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style', 'class', 'src', 'poster']
         });
+    }
+
+    setupPeriodicScan() {
+        // Rescan every 3 seconds to catch dynamically loaded media
+        setInterval(() => {
+            const currentMediaCount = document.querySelectorAll('video, audio').length;
+            if (currentMediaCount !== this.mediaElements.size) {
+                console.log('🔄 Periodic rescan triggered');
+                this.detectAllMedia();
+            }
+        }, 3000);
     }
 
     setupMessageListener() {
@@ -502,6 +547,10 @@ class MediaDetector {
                     break;
                 case 'showMediaDetection':
                     this.showDetectionResults();
+                    break;
+                case 'forceRescan':
+                    this.detectAllMedia();
+                    this.showNotification('🔍 Rescan Complete', `Found ${this.mediaElements.size} media elements`, '#3b82f6');
                     break;
             }
         });
@@ -520,24 +569,77 @@ class MediaDetector {
     }
 
     downloadAllMedia() {
+        if (this.mediaElements.size === 0) {
+            this.showErrorNotification('No media found to download');
+            return;
+        }
+        
+        let count = 0;
         this.mediaElements.forEach((media, id) => {
             if (media.sources && media.sources.length > 0) {
                 this.startDownload(media, 'best', false);
+                count++;
             }
         });
+        
+        this.showSuccessNotification(`Queued ${count} downloads`, 'Check the SwiftHarryDM app');
     }
 
     showDetectionResults() {
         const count = this.mediaElements.size;
-        alert(`🎯 Found ${count} media elements on this page\nCheck the top-right corners of videos for download buttons!`);
+        this.showNotification(
+            '🎯 Media Detection', 
+            `Found ${count} media elements on this page`, 
+            '#3b82f6'
+        );
+    }
+
+    detectVideoLinks() {
+        // Simple video link detection for common platforms
+        const patterns = [
+            /youtube\.com\/watch\?v=/i,
+            /youtu\.be\//i,
+            /vimeo\.com\//i,
+            /dailymotion\.com\//i
+        ];
+
+        // Check if current page is a video page
+        const currentUrl = window.location.href;
+        if (patterns.some(pattern => pattern.test(currentUrl))) {
+            const pageMedia = {
+                type: 'video_page',
+                url: currentUrl,
+                title: document.title,
+                element: document.body
+            };
+            this.mediaElements.set('page_video', pageMedia);
+            
+            // Add download button to page
+            const pageButton = this.createDownloadButton();
+            pageButton.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg><span>Download Page</span>`;
+            pageButton.style.position = 'fixed';
+            pageButton.style.top = '20px';
+            pageButton.style.right = '20px';
+            pageButton.style.zIndex = '10000';
+            pageButton.addEventListener('click', () => {
+                this.showDownloadPopup('page_video');
+            });
+            document.body.appendChild(pageButton);
+            this.downloadButtons.add(pageButton);
+        }
     }
 }
 
-// Initialize when page loads
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        new MediaDetector();
-    });
-} else {
-    new MediaDetector();
-}
+// Initialize immediately
+console.log('🚀 Loading SwiftHarryDM Media Detector...');
+new MediaDetector();
+
+// Also re-initialize when page fully loads
+window.addEventListener('load', () => {
+    console.log('📄 Page fully loaded, rescanning for media...');
+    setTimeout(() => {
+        if (window.MediaDetectorInstance) {
+            window.MediaDetectorInstance.detectAllMedia();
+        }
+    }, 2000);
+});
