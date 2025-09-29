@@ -1,9 +1,13 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 import threading
 import os
 import re
 import requests
+import json
+import hashlib
+import uuid
+from datetime import datetime, timedelta
 from src.downloader import Downloader
 from utils import convert_to_mp3, format_mapping
 from yt_dlp import YoutubeDL
@@ -15,6 +19,9 @@ queue_frames = []
 CURRENT_VERSION = "1.0.0"
 UPDATE_CHECK_URL = "https://swiftharrydm.harshchaudhary.com.np/version.txt"
 DOWNLOAD_PAGE_URL = "https://swiftharrydm.harshchaudhary.com.np/downloads"
+LICENSE_VERIFY_URL = "https://swiftharrydm.harshchaudhary.com.np/api/verify_license"
+TRIAL_DAYS = 7
+TOKEN_FILE = os.path.join(os.path.expanduser("~"), ".swift_dm_token.json")
 
 # ------------------ Utilities ------------------
 def clean_percent(percent_str):
@@ -31,6 +38,70 @@ def sanitize_filename(name):
 def get_filename_from_url(url):
     return sanitize_filename(url.split('/')[-1])
 
+def get_machine_id():
+    return hashlib.sha256(uuid.getnode().to_bytes(6,'big')).hexdigest()
+
+def save_local_token(data):
+    with open(TOKEN_FILE, "w") as f:
+        json.dump(data, f)
+
+def load_local_token():
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE, "r") as f:
+            return json.load(f)
+    return None
+
+# ------------------ License & Trial ------------------
+def verify_license_online(license_key, machine_id):
+    try:
+        resp = requests.post(LICENSE_VERIFY_URL, json={"license_key": license_key, "machine_id": machine_id}, timeout=5)
+        data = resp.json()
+        return data.get("valid", False)
+    except:
+        messagebox.showerror("Error", "Unable to verify license online. Check internet connection.")
+        return False
+
+def ask_for_license():
+    machine_id = get_machine_id()
+    license_key = simpledialog.askstring("License Key", "Enter your 24-character license key:")
+    if license_key and verify_license_online(license_key, machine_id):
+        save_local_token({"machine_id": machine_id, "license_key": license_key})
+        messagebox.showinfo("License Activated", "License activated successfully! Lifetime access granted.")
+        license_status_var.set("License: Active")
+        return True
+    else:
+        messagebox.showerror("Invalid License", "License key is invalid.")
+        return False
+
+def check_trial_or_license():
+    token = load_local_token()
+    machine_id = get_machine_id()
+    now = datetime.now()
+    
+    if token:
+        if token.get("machine_id") != machine_id:
+            # machine mismatch, start new trial
+            token = None
+        elif token.get("license_key"):
+            if verify_license_online(token["license_key"], machine_id):
+                license_status_var.set("License: Active")
+                return True
+        elif token.get("trial_end"):
+            trial_end = datetime.fromisoformat(token["trial_end"])
+            if now <= trial_end:
+                days_left = (trial_end - now).days
+                license_status_var.set(f"Trial: {days_left} days left")
+                return True
+            else:
+                messagebox.showinfo("Trial Expired", "Your 7-day trial expired. Please enter license key.")
+                return ask_for_license()
+    if not token:
+        trial_end = now + timedelta(days=TRIAL_DAYS)
+        save_local_token({"machine_id": machine_id, "trial_end": trial_end.isoformat()})
+        license_status_var.set(f"Trial: {TRIAL_DAYS} days left")
+        messagebox.showinfo("Trial Started", f"7-day trial started! Ends on {trial_end.strftime('%Y-%m-%d')}")
+        return True
+
 # ------------------ Update Checker ------------------
 def check_for_updates(auto=False):
     try:
@@ -41,7 +112,7 @@ def check_for_updates(auto=False):
                 log_text.insert(tk.END, f"Update available: {latest_version}\n")
                 log_text.see(tk.END)
             else:
-                if messagebox.askyesno("Update Available", f"A new version {latest_version} is available. Do you want to download it?"):
+                if messagebox.askyesno("Update Available", f"New version {latest_version} available. Download?"):
                     import webbrowser
                     webbrowser.open(DOWNLOAD_PAGE_URL)
         elif not auto:
@@ -55,7 +126,7 @@ def check_for_updates(auto=False):
 def auto_update_check():
     threading.Thread(target=check_for_updates, kwargs={"auto": True}, daemon=True).start()
 
-# ------------------ License ------------------
+# ------------------ License Display ------------------
 def show_license():
     try:
         with open("LICENSE.txt","r") as f:
@@ -176,7 +247,6 @@ def resume_selected():
             update_queue_item(idx)
             threading.Thread(target=download_worker, args=(idx,), daemon=True).start()
 
-# ------------------ Download Worker ------------------
 def download_worker(idx):
     item = download_queue[idx]
     url, fmt, save_path = item["url"], item["fmt"], item["save_path"]
@@ -205,7 +275,7 @@ def download_worker(idx):
 # ------------------ GUI ------------------
 root = tk.Tk()
 root.title("SwiftHarryDM - Universal Downloader")
-root.geometry("1000x750")
+root.geometry("1000x800")
 
 # Menu
 menu_bar = tk.Menu(root)
@@ -214,6 +284,13 @@ help_menu.add_command(label="Check for Updates", command=lambda: check_for_updat
 help_menu.add_command(label="License", command=show_license)
 menu_bar.add_cascade(label="Help", menu=help_menu)
 root.config(menu=menu_bar)
+
+# License / trial status
+license_status_var = tk.StringVar(value="Checking...")
+status_frame = tk.Frame(root)
+status_frame.pack(pady=5)
+tk.Label(status_frame, textvariable=license_status_var, font=("Arial",11,"bold")).pack(side="left", padx=5)
+tk.Button(status_frame, text="Enter License", command=ask_for_license, font=("Arial",10), bg="#0078D7", fg="white").pack(side="left", padx=10)
 
 # URL input
 tk.Label(root, text="Enter URL:", font=("Arial", 11)).pack(pady=5)
@@ -254,5 +331,10 @@ log_text.pack(pady=5, fill="both", expand=True)
 
 # Auto-update check at start
 auto_update_check()
+
+# Check trial/license at startup
+if not check_trial_or_license():
+    root.destroy()
+    exit()
 
 root.mainloop()
