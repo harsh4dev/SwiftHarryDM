@@ -69,15 +69,21 @@ def load_local_token():
 # ------------------ License & Trial ------------------
 def start_trial(machine_id):
     try:
-        print(f"Starting trial for machine: {machine_id}")
+        print(f"🔄 Starting trial for machine: {machine_id}")
         resp = requests.post(f"{LICENSE_SERVER}/trial", json={"machine_id": machine_id}, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        print(f"Trial response: {data}")
+        print(f"📄 Trial response: {data}")
         
         if data.get("valid"):
             days_left = data.get("days_left", TRIAL_DAYS)
-            save_local_token({"machine_id": machine_id, "trial_start": datetime.now().isoformat()})
+            trial_data = {
+                "machine_id": machine_id, 
+                "trial_start": datetime.now().isoformat(),
+                "trial_start_server": data.get("trial_started"),
+                "days_left": days_left
+            }
+            save_local_token(trial_data)
             license_status_var.set(f"Trial: {days_left} days left")
             messagebox.showinfo("Trial Started", f"Your trial started! {days_left} days left.")
             return True
@@ -85,99 +91,168 @@ def start_trial(machine_id):
             messagebox.showinfo("Trial Expired", "Trial expired. Enter a license key to continue.")
             return ask_for_license()
     except Exception as e:
-        print(f"Trial error: {e}")
+        print(f"❌ Trial error: {e}")
+        # If server is down but we have a valid local token, use it
+        token = load_local_token()
+        if token and "trial_start" in token:
+            trial_start = datetime.fromisoformat(token["trial_start"])
+            elapsed = (datetime.now() - trial_start).days
+            if elapsed < TRIAL_DAYS:
+                days_left = TRIAL_DAYS - elapsed
+                license_status_var.set(f"Trial: {days_left} days left (Offline)")
+                enable_download_buttons(True)
+                return True
         messagebox.showerror("Error", f"Cannot start trial.\n{str(e)}")
         return False
 
 def verify_license_online(license_key, machine_id):
     try:
-        print(f"Verifying license: {license_key} for machine: {machine_id}")
-        # Clean the license key (remove spaces and normalize)
-        clean_license = license_key.strip().replace(" ", "").replace("-", "")
+        print(f"🔐 Verifying license: {license_key} for machine: {machine_id}")
+        # Clean the license key
+        clean_license = license_key.strip().replace(" ", "").replace("-", "").upper()
+        if len(clean_license) != 24:
+            return False, "invalid_format"
         
         resp = requests.post(f"{LICENSE_SERVER}/verify", 
-                           json={"license_key": clean_license, "machine_id": machine_id}, 
+                           json={
+                               "license_key": clean_license, 
+                               "machine_id": machine_id
+                           }, 
                            timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        print(f"License verification response: {data}")
+        print(f"📄 License verification response: {data}")
         return data.get("valid", False), data.get("type", None)
     except Exception as e:
-        print(f"License verification error: {e}")
-        messagebox.showerror("Error", f"Cannot verify license.\n{str(e)}")
-        return False, None
+        print(f"❌ License verification error: {e}")
+        return False, "connection_error"
 
 def ask_for_license():
     machine_id = get_machine_id()
     license_key = simpledialog.askstring("License Key", "Enter your 24-character license key:")
     if license_key:
         # Clean the input
-        clean_license = license_key.strip().replace(" ", "").upper()
+        clean_license = license_key.strip().replace(" ", "").replace("-", "").upper()
         if len(clean_license) != 24:
             messagebox.showerror("Invalid Format", "License key must be 24 characters long.")
             return ask_for_license()
             
         valid, ltype = verify_license_online(clean_license, machine_id)
         if valid:
-            save_local_token({
+            license_data = {
                 "machine_id": machine_id, 
                 "license_key": clean_license, 
                 "license_type": ltype,
-                "activated_at": datetime.now().isoformat()
-            })
+                "activated_at": datetime.now().isoformat(),
+                "last_verified": datetime.now().isoformat()
+            }
+            save_local_token(license_data)
             license_status_var.set("License: Active")
             enable_download_buttons(True)
             messagebox.showinfo("License Activated", "License activated successfully! Lifetime access granted.")
             return True
+        else:
+            if ltype == "connection_error":
+                messagebox.showerror("Connection Error", "Cannot connect to license server. Please check your internet connection.")
+            else:
+                messagebox.showerror("Invalid License", "License key is invalid or already used on another machine.")
     elif license_key is None:  # User clicked cancel
         return False
-    messagebox.showerror("Invalid License", "License key is invalid or already used.")
     return False
 
-def check_trial_or_license():
+def check_license_status():
+    """Check license status without blocking the UI"""
     try:
         token = load_local_token()
         machine_id = get_machine_id()
-        now = datetime.now()
+        
+        print(f"🔍 Checking license status for machine: {machine_id}")
+        print(f"📁 Token data: {token}")
 
-        print(f"Checking license/trial for machine: {machine_id}")
-        print(f"Token data: {token}")
+        if not token:
+            print("📭 No token found, starting trial...")
+            return start_trial(machine_id)
 
-        if token:
-            # License exists
-            if "license_key" in token:
-                print("Found existing license, verifying...")
-                valid, _ = verify_license_online(token["license_key"], machine_id)
-                if valid:
-                    license_status_var.set("License: Active")
+        # Check if we have a license
+        if "license_key" in token:
+            print("📋 Found license in token, verifying...")
+            valid, ltype = verify_license_online(token["license_key"], machine_id)
+            if valid:
+                # Update last verified time
+                token["last_verified"] = datetime.now().isoformat()
+                save_local_token(token)
+                license_status_var.set("License: Active")
+                enable_download_buttons(True)
+                return True
+            else:
+                if ltype == "connection_error":
+                    # Server is down, but we have a license - allow offline use
+                    license_status_var.set("License: Active (Offline)")
+                    enable_download_buttons(True)
+                    return True
+                else:
+                    # License is invalid
+                    enable_download_buttons(False)
+                    return ask_for_license()
+
+        # Check if we have a trial
+        elif "trial_start" in token:
+            print("📋 Found trial in token, checking...")
+            # First try to check with server
+            try:
+                resp = requests.post(f"{LICENSE_SERVER}/trial", json={"machine_id": machine_id}, timeout=5)
+                data = resp.json()
+                if data.get("valid"):
+                    days_left = data.get("days_left", TRIAL_DAYS)
+                    license_status_var.set(f"Trial: {days_left} days left")
                     enable_download_buttons(True)
                     return True
                 else:
                     enable_download_buttons(False)
                     return ask_for_license()
-            # Trial exists
-            elif "trial_start" in token:
-                print("Found existing trial, checking...")
+            except:
+                # Server is down, calculate locally
                 trial_start = datetime.fromisoformat(token["trial_start"])
-                elapsed = (now - trial_start).days
+                elapsed = (datetime.now() - trial_start).days
                 if elapsed < TRIAL_DAYS:
-                    license_status_var.set(f"Trial: {TRIAL_DAYS - elapsed} days left")
+                    days_left = TRIAL_DAYS - elapsed
+                    license_status_var.set(f"Trial: {days_left} days left (Offline)")
                     enable_download_buttons(True)
                     return True
                 else:
                     enable_download_buttons(False)
-                    # Check with server to be sure
-                    return start_trial(machine_id)
-        else:
-            print("No token found, starting trial...")
-            return start_trial(machine_id)
-            
+                    # Try to ask for license when server is back
+                    return ask_for_license()
+
+        # No valid token found
+        print("📭 No valid token, starting fresh trial...")
+        return start_trial(machine_id)
+        
     except Exception as e:
-        print(f"Error in check_trial_or_license: {e}")
+        print(f"💥 Error in check_license_status: {e}")
         # Fallback: enable buttons and show error status
         license_status_var.set("Status: Error - Check Connection")
         enable_download_buttons(True)  # Enable anyway for better UX
         return True
+
+def check_trial_or_license():
+    """Main license check function - called at startup"""
+    # Run in a thread to avoid blocking UI
+    def run_check():
+        try:
+            success = check_license_status()
+            if not success:
+                # If check fails, retry once after 2 seconds
+                print("🔄 Initial check failed, retrying...")
+                time.sleep(2)
+                check_license_status()
+        except Exception as e:
+            print(f"💥 License check thread error: {e}")
+            license_status_var.set("Status: Check Failed")
+    
+    # Start the check in a separate thread
+    threading.Thread(target=run_check, daemon=True).start()
+    return True  # Always return True to prevent app from closing immediately
 
 def enable_download_buttons(state=True):
     for btn in [btn_add, btn_instant, btn_start, btn_pause, btn_resume]:
@@ -475,8 +550,8 @@ log_text.pack(pady=5, fill="both", expand=True)
 auto_update_check()
 
 # Check trial/license at startup
-#if not check_trial_or_license():
-  #  root.destroy()
-   # exit()
+if not check_trial_or_license():
+    root.destroy()
+    exit()
 
 root.mainloop()
