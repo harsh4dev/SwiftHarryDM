@@ -19,9 +19,24 @@ queue_frames = []
 CURRENT_VERSION = "1.0.0"
 UPDATE_CHECK_URL = "https://swiftharrydm.harshchaudhary.com.np/version.txt"
 DOWNLOAD_PAGE_URL = "https://swiftharrydm.harshchaudhary.com.np/downloads"
-LICENSE_VERIFY_URL = "https://swiftharrydm.harshchaudhary.com.np/api/verify_license"
-TRIAL_DAYS = 7
+
+# License / Trial Config
+LICENSE_SERVER = "http://localhost:3000"  # change to live URL when deploying
 TOKEN_FILE = os.path.join(os.path.expanduser("~"), ".swift_dm_token.json")
+TRIAL_DAYS = 7
+
+
+#temporary
+def check_trial_or_license():
+    print("Checking trial/license...")
+    token = load_local_token()
+    machine_id = get_machine_id()
+    now = datetime.now()
+    
+    if token:
+        print("Token found:", token)
+    else:
+        print("No token found. Starting trial...")
 
 # ------------------ Utilities ------------------
 def clean_percent(percent_str):
@@ -52,55 +67,121 @@ def load_local_token():
     return None
 
 # ------------------ License & Trial ------------------
+def start_trial(machine_id):
+    try:
+        print(f"Starting trial for machine: {machine_id}")
+        resp = requests.post(f"{LICENSE_SERVER}/trial", json={"machine_id": machine_id}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        print(f"Trial response: {data}")
+        
+        if data.get("valid"):
+            days_left = data.get("days_left", TRIAL_DAYS)
+            save_local_token({"machine_id": machine_id, "trial_start": datetime.now().isoformat()})
+            license_status_var.set(f"Trial: {days_left} days left")
+            messagebox.showinfo("Trial Started", f"Your trial started! {days_left} days left.")
+            return True
+        else:
+            messagebox.showinfo("Trial Expired", "Trial expired. Enter a license key to continue.")
+            return ask_for_license()
+    except Exception as e:
+        print(f"Trial error: {e}")
+        messagebox.showerror("Error", f"Cannot start trial.\n{str(e)}")
+        return False
+
 def verify_license_online(license_key, machine_id):
     try:
-        resp = requests.post(LICENSE_VERIFY_URL, json={"license_key": license_key, "machine_id": machine_id}, timeout=5)
+        print(f"Verifying license: {license_key} for machine: {machine_id}")
+        # Clean the license key (remove spaces and normalize)
+        clean_license = license_key.strip().replace(" ", "").replace("-", "")
+        
+        resp = requests.post(f"{LICENSE_SERVER}/verify", 
+                           json={"license_key": clean_license, "machine_id": machine_id}, 
+                           timeout=10)
+        resp.raise_for_status()
         data = resp.json()
-        return data.get("valid", False)
-    except:
-        messagebox.showerror("Error", "Unable to verify license online. Check internet connection.")
-        return False
+        print(f"License verification response: {data}")
+        return data.get("valid", False), data.get("type", None)
+    except Exception as e:
+        print(f"License verification error: {e}")
+        messagebox.showerror("Error", f"Cannot verify license.\n{str(e)}")
+        return False, None
 
 def ask_for_license():
     machine_id = get_machine_id()
     license_key = simpledialog.askstring("License Key", "Enter your 24-character license key:")
-    if license_key and verify_license_online(license_key, machine_id):
-        save_local_token({"machine_id": machine_id, "license_key": license_key})
-        messagebox.showinfo("License Activated", "License activated successfully! Lifetime access granted.")
-        license_status_var.set("License: Active")
-        return True
-    else:
-        messagebox.showerror("Invalid License", "License key is invalid.")
+    if license_key:
+        # Clean the input
+        clean_license = license_key.strip().replace(" ", "").upper()
+        if len(clean_license) != 24:
+            messagebox.showerror("Invalid Format", "License key must be 24 characters long.")
+            return ask_for_license()
+            
+        valid, ltype = verify_license_online(clean_license, machine_id)
+        if valid:
+            save_local_token({
+                "machine_id": machine_id, 
+                "license_key": clean_license, 
+                "license_type": ltype,
+                "activated_at": datetime.now().isoformat()
+            })
+            license_status_var.set("License: Active")
+            enable_download_buttons(True)
+            messagebox.showinfo("License Activated", "License activated successfully! Lifetime access granted.")
+            return True
+    elif license_key is None:  # User clicked cancel
         return False
+    messagebox.showerror("Invalid License", "License key is invalid or already used.")
+    return False
 
 def check_trial_or_license():
-    token = load_local_token()
-    machine_id = get_machine_id()
-    now = datetime.now()
-    
-    if token:
-        if token.get("machine_id") != machine_id:
-            # machine mismatch, start new trial
-            token = None
-        elif token.get("license_key"):
-            if verify_license_online(token["license_key"], machine_id):
-                license_status_var.set("License: Active")
-                return True
-        elif token.get("trial_end"):
-            trial_end = datetime.fromisoformat(token["trial_end"])
-            if now <= trial_end:
-                days_left = (trial_end - now).days
-                license_status_var.set(f"Trial: {days_left} days left")
-                return True
-            else:
-                messagebox.showinfo("Trial Expired", "Your 7-day trial expired. Please enter license key.")
-                return ask_for_license()
-    if not token:
-        trial_end = now + timedelta(days=TRIAL_DAYS)
-        save_local_token({"machine_id": machine_id, "trial_end": trial_end.isoformat()})
-        license_status_var.set(f"Trial: {TRIAL_DAYS} days left")
-        messagebox.showinfo("Trial Started", f"7-day trial started! Ends on {trial_end.strftime('%Y-%m-%d')}")
+    try:
+        token = load_local_token()
+        machine_id = get_machine_id()
+        now = datetime.now()
+
+        print(f"Checking license/trial for machine: {machine_id}")
+        print(f"Token data: {token}")
+
+        if token:
+            # License exists
+            if "license_key" in token:
+                print("Found existing license, verifying...")
+                valid, _ = verify_license_online(token["license_key"], machine_id)
+                if valid:
+                    license_status_var.set("License: Active")
+                    enable_download_buttons(True)
+                    return True
+                else:
+                    enable_download_buttons(False)
+                    return ask_for_license()
+            # Trial exists
+            elif "trial_start" in token:
+                print("Found existing trial, checking...")
+                trial_start = datetime.fromisoformat(token["trial_start"])
+                elapsed = (now - trial_start).days
+                if elapsed < TRIAL_DAYS:
+                    license_status_var.set(f"Trial: {TRIAL_DAYS - elapsed} days left")
+                    enable_download_buttons(True)
+                    return True
+                else:
+                    enable_download_buttons(False)
+                    # Check with server to be sure
+                    return start_trial(machine_id)
+        else:
+            print("No token found, starting trial...")
+            return start_trial(machine_id)
+            
+    except Exception as e:
+        print(f"Error in check_trial_or_license: {e}")
+        # Fallback: enable buttons and show error status
+        license_status_var.set("Status: Error - Check Connection")
+        enable_download_buttons(True)  # Enable anyway for better UX
         return True
+
+def enable_download_buttons(state=True):
+    for btn in [btn_add, btn_instant, btn_start, btn_pause, btn_resume]:
+        btn.config(state=tk.NORMAL if state else tk.DISABLED)
 
 # ------------------ Update Checker ------------------
 def check_for_updates(auto=False):
@@ -127,7 +208,7 @@ def auto_update_check():
     threading.Thread(target=check_for_updates, kwargs={"auto": True}, daemon=True).start()
 
 # ------------------ License Display ------------------
-def show_license():
+def show_license_info():
     try:
         with open("LICENSE.txt","r") as f:
             license_text = f.read()
@@ -138,6 +219,54 @@ def show_license():
         txt.insert(tk.END, license_text)
     except:
         messagebox.showerror("Error", "LICENSE.txt not found!")
+
+def show_license_window():
+    """Show license management window"""
+    license_win = tk.Toplevel(root)
+    license_win.title("License Management")
+    license_win.geometry("400x300")
+    license_win.resizable(False, False)
+    
+    # Center the window
+    license_win.transient(root)
+    license_win.grab_set()
+    
+    # Current status frame
+    status_frame = tk.Frame(license_win, padx=10, pady=10)
+    status_frame.pack(fill="x", padx=10, pady=10)
+    
+    tk.Label(status_frame, text="Current Status:", font=("Arial", 12, "bold")).pack(anchor="w")
+    current_status_label = tk.Label(status_frame, textvariable=license_status_var, font=("Arial", 11), fg="blue")
+    current_status_label.pack(anchor="w", pady=(5, 0))
+    
+    # Separator
+    ttk.Separator(license_win, orient="horizontal").pack(fill="x", padx=10, pady=5)
+    
+    # Actions frame
+    actions_frame = tk.Frame(license_win, padx=10, pady=10)
+    actions_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    tk.Label(actions_frame, text="License Actions:", font=("Arial", 12, "bold")).pack(anchor="w")
+    
+    # Buttons
+    btn_enter_license = tk.Button(actions_frame, text="Enter License Key", command=ask_for_license, 
+                                 bg="#0078D7", fg="white", width=20, font=("Arial", 10))
+    btn_enter_license.pack(pady=10)
+    
+    btn_check_status = tk.Button(actions_frame, text="Check License Status", 
+                                command=lambda: check_trial_or_license(), 
+                                bg="#28A745", fg="white", width=20, font=("Arial", 10))
+    btn_check_status.pack(pady=5)
+    
+    btn_view_info = tk.Button(actions_frame, text="View License Information", 
+                             command=show_license_info, 
+                             bg="#6A0DAD", fg="white", width=20, font=("Arial", 10))
+    btn_view_info.pack(pady=10)
+    
+    # Close button
+    btn_close = tk.Button(license_win, text="Close", command=license_win.destroy,
+                         bg="#DC3545", fg="white", width=15, font=("Arial", 10))
+    btn_close.pack(pady=10)
 
 # ------------------ Universal Downloader ------------------
 class UniversalDownloader:
@@ -279,18 +408,26 @@ root.geometry("1000x800")
 
 # Menu
 menu_bar = tk.Menu(root)
+
+# License Menu
+license_menu = tk.Menu(menu_bar, tearoff=0)
+license_menu.add_command(label="License Management", command=show_license_window)
+license_menu.add_command(label="View License Info", command=show_license_info)
+menu_bar.add_cascade(label="License", menu=license_menu)
+
+# Help Menu
 help_menu = tk.Menu(menu_bar, tearoff=0)
 help_menu.add_command(label="Check for Updates", command=lambda: check_for_updates(auto=False))
-help_menu.add_command(label="License", command=show_license)
 menu_bar.add_cascade(label="Help", menu=help_menu)
+
 root.config(menu=menu_bar)
 
-# License / trial status
+# License status (minimal display in main window)
 license_status_var = tk.StringVar(value="Checking...")
 status_frame = tk.Frame(root)
 status_frame.pack(pady=5)
-tk.Label(status_frame, textvariable=license_status_var, font=("Arial",11,"bold")).pack(side="left", padx=5)
-tk.Button(status_frame, text="Enter License", command=ask_for_license, font=("Arial",10), bg="#0078D7", fg="white").pack(side="left", padx=10)
+tk.Label(status_frame, text="Status:", font=("Arial", 11)).pack(side="left", padx=5)
+tk.Label(status_frame, textvariable=license_status_var, font=("Arial", 11, "bold"), fg="blue").pack(side="left", padx=5)
 
 # URL input
 tk.Label(root, text="Enter URL:", font=("Arial", 11)).pack(pady=5)
@@ -307,11 +444,16 @@ format_menu.pack(pady=5)
 # Buttons
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=10)
-tk.Button(btn_frame, text="Add to Queue", command=add_to_queue, bg="#0078D7", fg="white", width=18, font=("Arial",10)).grid(row=0, column=0, padx=5)
-tk.Button(btn_frame, text="Instant Download", command=instant_download, bg="#107C10", fg="white", width=18, font=("Arial",10)).grid(row=0, column=1, padx=5)
-tk.Button(btn_frame, text="Start Selected", command=start_selected, bg="#28A745", fg="white", width=18, font=("Arial",10)).grid(row=0, column=2, padx=5)
-tk.Button(btn_frame, text="Pause Selected", command=pause_selected, bg="#FFA500", fg="white", width=18, font=("Arial",10)).grid(row=0, column=3, padx=5)
-tk.Button(btn_frame, text="Resume Selected", command=resume_selected, bg="#6A0DAD", fg="white", width=18, font=("Arial",10)).grid(row=0, column=4, padx=5)
+btn_add = tk.Button(btn_frame, text="Add to Queue", command=add_to_queue, bg="#0078D7", fg="white", width=18, font=("Arial",10))
+btn_add.grid(row=0, column=0, padx=5)
+btn_instant = tk.Button(btn_frame, text="Instant Download", command=instant_download, bg="#107C10", fg="white", width=18, font=("Arial",10))
+btn_instant.grid(row=0, column=1, padx=5)
+btn_start = tk.Button(btn_frame, text="Start Selected", command=start_selected, bg="#28A745", fg="white", width=18, font=("Arial",10))
+btn_start.grid(row=0, column=2, padx=5)
+btn_pause = tk.Button(btn_frame, text="Pause Selected", command=pause_selected, bg="#FFA500", fg="white", width=18, font=("Arial",10))
+btn_pause.grid(row=0, column=3, padx=5)
+btn_resume = tk.Button(btn_frame, text="Resume Selected", command=resume_selected, bg="#6A0DAD", fg="white", width=18, font=("Arial",10))
+btn_resume.grid(row=0, column=4, padx=5)
 
 # Queue container
 tk.Label(root, text="Download Queue:", font=("Arial", 11, "bold")).pack(pady=5)
@@ -333,8 +475,8 @@ log_text.pack(pady=5, fill="both", expand=True)
 auto_update_check()
 
 # Check trial/license at startup
-if not check_trial_or_license():
-    root.destroy()
-    exit()
+#if not check_trial_or_license():
+  #  root.destroy()
+   # exit()
 
 root.mainloop()
