@@ -7,6 +7,7 @@ import requests
 import json
 import hashlib
 import uuid
+import time
 from datetime import datetime, timedelta
 from src.downloader import Downloader
 from utils import convert_to_mp3, format_mapping
@@ -22,22 +23,22 @@ UPDATE_CHECK_URL = "https://swiftharrydm.harshchaudhary.com.np/version.txt"
 DOWNLOAD_PAGE_URL = "https://swiftharrydm.harshchaudhary.com.np/downloads"
 
 # License / Trial Config
-LICENSE_SERVER = "http://localhost:3000"  # change to live URL when deploying
+LICENSE_SERVER = "http://localhost:3000"
 TOKEN_FILE = os.path.join(os.path.expanduser("~"), ".swift_dm_token.json")
 TRIAL_DAYS = 7
 
-
-#temporary
-def check_trial_or_license():
-    print("Checking trial/license...")
-    token = load_local_token()
-    machine_id = get_machine_id()
-    now = datetime.now()
-    
-    if token:
-        print("Token found:", token)
-    else:
-        print("No token found. Starting trial...")
+# ------------------ Modern UI Colors ------------------
+COLORS = {
+    "primary": "#667eea",
+    "primary_dark": "#5a6fd8",
+    "secondary": "#764ba2",
+    "success": "#10b981",
+    "warning": "#f59e0b",
+    "danger": "#ef4444",
+    "dark": "#1f2937",
+    "light": "#f8fafc",
+    "gray": "#6b7280"
+}
 
 # ------------------ Utilities ------------------
 def clean_percent(percent_str):
@@ -67,23 +68,134 @@ def load_local_token():
             return json.load(f)
     return None
 
-#--------------------Extension------------------------
+# ------------------ Extension Integration ------------------
 app = Flask(__name__)
 
-@app.route("/capture", methods=["POST"])
-def capture():
-    data = request.get_json()
-    url = data.get("url")
-    if url:
-        # Yaha queue me add kar do
-        download_queue.append({"url": url, "fmt": "best", "save_path": os.path.join(os.path.expanduser("~"), "Desktop"), "status": "Pending", "progress": 0})
-        return jsonify({"status": "ok", "message": f"Captured {url}"})
-    return jsonify({"status": "error", "message": "No URL"}), 400
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({
+        "status": "running", 
+        "app": "SwiftHarryDM",
+        "version": CURRENT_VERSION,
+        "timestamp": datetime.now().isoformat()
+    })
+
+@app.route("/api/download", methods=["POST", "OPTIONS"])
+def handle_download():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"})
+    
+    try:
+        data = request.get_json()
+        print(f"📥 Download request from extension: {data}")
+        
+        url = data.get("url")
+        title = data.get("title", "Unknown Title")
+        format_type = data.get("format", "best")
+        instant = data.get("instantDownload", False)
+        page_url = data.get("pageUrl", "")
+        
+        if not url:
+            return jsonify({"success": False, "error": "No URL provided"}), 400
+        
+        title = sanitize_filename(title)
+        save_path = os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
+        os.makedirs(save_path, exist_ok=True)
+        
+        item = {
+            "url": url, 
+            "fmt": format_type, 
+            "save_path": save_path, 
+            "status": "Pending", 
+            "progress": 0,
+            "title": title,
+            "source": "extension",
+            "page_url": page_url,
+            "added_at": datetime.now().isoformat()
+        }
+        
+        download_queue.append(item)
+        paused_flags.append(False)
+        
+        root.after(0, lambda: add_extension_download_to_gui(len(download_queue)-1))
+        
+        if instant:
+            item["status"] = "Downloading"
+            root.after(0, lambda: start_single_download(len(download_queue)-1))
+        
+        log_text.insert(tk.END, f"✅ Added from extension: {title}\n")
+        log_text.see(tk.END)
+        
+        return jsonify({
+            "success": True, 
+            "message": "Download added to queue",
+            "queue_position": len(download_queue),
+            "title": title,
+            "format": format_type
+        })
+        
+    except Exception as e:
+        print(f"❌ Extension download error: {e}")
+        log_text.insert(tk.END, f"❌ Extension error: {str(e)}\n")
+        log_text.see(tk.END)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/queue", methods=["GET"])
+def get_queue_status():
+    queue_info = []
+    for idx, item in enumerate(download_queue):
+        queue_info.append({
+            "position": idx + 1,
+            "title": item.get("title", get_filename_from_url(item["url"])),
+            "status": item["status"],
+            "progress": item["progress"],
+            "format": item["fmt"]
+        })
+    
+    return jsonify({
+        "total": len(download_queue),
+        "active": len([item for item in download_queue if item["status"] == "Downloading"]),
+        "queue": queue_info
+    })
+
+@app.route("/api/stats", methods=["GET"])
+def get_app_stats():
+    return jsonify({
+        "version": CURRENT_VERSION,
+        "queue_size": len(download_queue),
+        "active_downloads": len([item for item in download_queue if item["status"] == "Downloading"]),
+        "completed_today": len([item for item in download_queue if item["status"] == "Completed" and datetime.fromisoformat(item.get("added_at", datetime.now().isoformat())).date() == datetime.now().date()])
+    })
+
+def add_extension_download_to_gui(idx):
+    if idx < len(download_queue):
+        create_queue_item(idx)
+        queue_canvas.yview_moveto(1.0)
+
+def start_single_download(idx):
+    if idx < len(download_queue) and download_queue[idx]["status"] == "Pending":
+        download_queue[idx]["status"] = "Downloading"
+        update_queue_item(idx)
+        threading.Thread(target=download_worker, args=(idx,), daemon=True).start()
 
 def run_flask():
-    app.run(port=5001)
+    try:
+        print("🚀 Starting Flask server for browser extension on port 5001...")
+        app.run(host='127.0.0.1', port=5001, debug=False, threaded=True)
+    except Exception as e:
+        print(f"❌ Flask server error: {e}")
+        try:
+            app.run(host='127.0.0.1', port=5002, debug=False, threaded=True)
+        except Exception as e2:
+            print(f"❌ Failed to start Flask server: {e2}")
 
-# Start Flask in background when app launches
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ------------------ License & Trial ------------------
@@ -112,7 +224,6 @@ def start_trial(machine_id):
             return ask_for_license()
     except Exception as e:
         print(f"❌ Trial error: {e}")
-        # If server is down but we have a valid local token, use it
         token = load_local_token()
         if token and "trial_start" in token:
             trial_start = datetime.fromisoformat(token["trial_start"])
@@ -128,16 +239,12 @@ def start_trial(machine_id):
 def verify_license_online(license_key, machine_id):
     try:
         print(f"🔐 Verifying license: {license_key} for machine: {machine_id}")
-        # Clean the license key
         clean_license = license_key.strip().replace(" ", "").replace("-", "").upper()
         if len(clean_license) != 24:
             return False, "invalid_format"
         
         resp = requests.post(f"{LICENSE_SERVER}/verify", 
-                           json={
-                               "license_key": clean_license, 
-                               "machine_id": machine_id
-                           }, 
+                           json={"license_key": clean_license, "machine_id": machine_id}, 
                            timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -151,7 +258,6 @@ def ask_for_license():
     machine_id = get_machine_id()
     license_key = simpledialog.askstring("License Key", "Enter your 24-character license key:")
     if license_key:
-        # Clean the input
         clean_license = license_key.strip().replace(" ", "").replace("-", "").upper()
         if len(clean_license) != 24:
             messagebox.showerror("Invalid Format", "License key must be 24 characters long.")
@@ -176,12 +282,11 @@ def ask_for_license():
                 messagebox.showerror("Connection Error", "Cannot connect to license server. Please check your internet connection.")
             else:
                 messagebox.showerror("Invalid License", "License key is invalid or already used on another machine.")
-    elif license_key is None:  # User clicked cancel
+    elif license_key is None:
         return False
     return False
 
 def check_license_status():
-    """Check license status without blocking the UI"""
     try:
         token = load_local_token()
         machine_id = get_machine_id()
@@ -193,12 +298,10 @@ def check_license_status():
             print("📭 No token found, starting trial...")
             return start_trial(machine_id)
 
-        # Check if we have a license
         if "license_key" in token:
             print("📋 Found license in token, verifying...")
             valid, ltype = verify_license_online(token["license_key"], machine_id)
             if valid:
-                # Update last verified time
                 token["last_verified"] = datetime.now().isoformat()
                 save_local_token(token)
                 license_status_var.set("License: Active")
@@ -206,19 +309,15 @@ def check_license_status():
                 return True
             else:
                 if ltype == "connection_error":
-                    # Server is down, but we have a license - allow offline use
                     license_status_var.set("License: Active (Offline)")
                     enable_download_buttons(True)
                     return True
                 else:
-                    # License is invalid
                     enable_download_buttons(False)
                     return ask_for_license()
 
-        # Check if we have a trial
         elif "trial_start" in token:
             print("📋 Found trial in token, checking...")
-            # First try to check with server
             try:
                 resp = requests.post(f"{LICENSE_SERVER}/trial", json={"machine_id": machine_id}, timeout=5)
                 data = resp.json()
@@ -231,7 +330,6 @@ def check_license_status():
                     enable_download_buttons(False)
                     return ask_for_license()
             except:
-                # Server is down, calculate locally
                 trial_start = datetime.fromisoformat(token["trial_start"])
                 elapsed = (datetime.now() - trial_start).days
                 if elapsed < TRIAL_DAYS:
@@ -241,28 +339,22 @@ def check_license_status():
                     return True
                 else:
                     enable_download_buttons(False)
-                    # Try to ask for license when server is back
                     return ask_for_license()
 
-        # No valid token found
         print("📭 No valid token, starting fresh trial...")
         return start_trial(machine_id)
         
     except Exception as e:
         print(f"💥 Error in check_license_status: {e}")
-        # Fallback: enable buttons and show error status
         license_status_var.set("Status: Error - Check Connection")
-        enable_download_buttons(True)  # Enable anyway for better UX
+        enable_download_buttons(True)
         return True
 
 def check_trial_or_license():
-    """Main license check function - called at startup"""
-    # Run in a thread to avoid blocking UI
     def run_check():
         try:
             success = check_license_status()
             if not success:
-                # If check fails, retry once after 2 seconds
                 print("🔄 Initial check failed, retrying...")
                 time.sleep(2)
                 check_license_status()
@@ -270,12 +362,11 @@ def check_trial_or_license():
             print(f"💥 License check thread error: {e}")
             license_status_var.set("Status: Check Failed")
     
-    # Start the check in a separate thread
     threading.Thread(target=run_check, daemon=True).start()
-    return True  # Always return True to prevent app from closing immediately
+    return True
 
 def enable_download_buttons(state=True):
-    for btn in [btn_add, btn_instant, btn_start, btn_pause, btn_resume]:
+    for btn in [btn_add, btn_instant, btn_start, btn_pause, btn_resume, btn_clear_completed]:
         btn.config(state=tk.NORMAL if state else tk.DISABLED)
 
 # ------------------ Update Checker ------------------
@@ -302,65 +393,157 @@ def check_for_updates(auto=False):
 def auto_update_check():
     threading.Thread(target=check_for_updates, kwargs={"auto": True}, daemon=True).start()
 
-# ------------------ License Display ------------------
+# ------------------ About Window ------------------
+def show_about():
+    about_window = tk.Toplevel(root)
+    about_window.title("About SwiftHarryDM")
+    about_window.geometry("500x400")
+    about_window.resizable(False, False)
+    about_window.configure(bg=COLORS["light"])
+    about_window.transient(root)
+    about_window.grab_set()
+    
+    # Center the window
+    about_window.update_idletasks()
+    x = (about_window.winfo_screenwidth() // 2) - (500 // 2)
+    y = (about_window.winfo_screenheight() // 2) - (400 // 2)
+    about_window.geometry(f"500x400+{x}+{y}")
+    
+    # Header
+    header_frame = tk.Frame(about_window, bg=COLORS["primary"], height=100)
+    header_frame.pack(fill="x", side="top")
+    header_frame.pack_propagate(False)
+    
+    tk.Label(header_frame, text="🚀 SwiftHarryDM", font=("Arial", 24, "bold"), 
+             bg=COLORS["primary"], fg="white").pack(expand=True)
+    
+    tk.Label(header_frame, text="Universal Media Downloader", font=("Arial", 12), 
+             bg=COLORS["primary"], fg="white").pack(expand=True)
+    
+    # Content
+    content_frame = tk.Frame(about_window, bg=COLORS["light"], padx=20, pady=20)
+    content_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    info_text = f"""
+Version: {CURRENT_VERSION}
+
+SwiftHarryDM is a powerful universal downloader that supports:
+• YouTube, Vimeo, Twitter, and 1000+ sites
+• Multiple formats (MP4, MP3, 1080p, 720p)
+• Browser extension integration
+• Queue management with pause/resume
+• License and trial system
+
+Features:
+✓ High-speed downloads
+✓ Format conversion
+✓ Browser integration
+✓ Modern UI/UX
+✓ Cross-platform support
+
+Developed with ❤️ for content creators and enthusiasts.
+
+© 2024 SwiftHarryDM. All rights reserved.
+    """
+    
+    tk.Label(content_frame, text=info_text, font=("Arial", 10), 
+             bg=COLORS["light"], justify="left", anchor="w").pack(fill="both", expand=True)
+    
+    # Close button
+    tk.Button(about_window, text="Close", command=about_window.destroy,
+              bg=COLORS["primary"], fg="white", font=("Arial", 10, "bold"),
+              width=20, height=2).pack(pady=10)
+
+# ------------------ License Windows ------------------
 def show_license_info():
     try:
         with open("LICENSE.txt","r") as f:
             license_text = f.read()
         license_window = tk.Toplevel(root)
         license_window.title("License Information")
-        txt = tk.Text(license_window, wrap="word", font=("Arial",10), width=100, height=30)
-        txt.pack(padx=5, pady=5, fill="both", expand=True)
+        license_window.geometry("700x500")
+        
+        text_frame = tk.Frame(license_window)
+        text_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        txt = tk.Text(text_frame, wrap="word", font=("Arial",10), yscrollcommand=scrollbar.set)
+        txt.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=txt.yview)
+        
         txt.insert(tk.END, license_text)
+        txt.config(state="disabled")
     except:
         messagebox.showerror("Error", "LICENSE.txt not found!")
 
 def show_license_window():
-    """Show license management window"""
     license_win = tk.Toplevel(root)
     license_win.title("License Management")
     license_win.geometry("400x300")
     license_win.resizable(False, False)
+    license_win.configure(bg=COLORS["light"])
     
-    # Center the window
     license_win.transient(root)
     license_win.grab_set()
     
+    # Center the window
+    license_win.update_idletasks()
+    x = (license_win.winfo_screenwidth() // 2) - (400 // 2)
+    y = (license_win.winfo_screenheight() // 2) - (300 // 2)
+    license_win.geometry(f"400x300+{x}+{y}")
+    
+    # Header
+    header_frame = tk.Frame(license_win, bg=COLORS["primary"], height=60)
+    header_frame.pack(fill="x", side="top")
+    header_frame.pack_propagate(False)
+    
+    tk.Label(header_frame, text="License Management", font=("Arial", 16, "bold"), 
+             bg=COLORS["primary"], fg="white").pack(expand=True)
+    
     # Current status frame
-    status_frame = tk.Frame(license_win, padx=10, pady=10)
+    status_frame = tk.Frame(license_win, padx=20, pady=20, bg=COLORS["light"])
     status_frame.pack(fill="x", padx=10, pady=10)
     
-    tk.Label(status_frame, text="Current Status:", font=("Arial", 12, "bold")).pack(anchor="w")
-    current_status_label = tk.Label(status_frame, textvariable=license_status_var, font=("Arial", 11), fg="blue")
+    tk.Label(status_frame, text="Current Status:", font=("Arial", 12, "bold"), 
+             bg=COLORS["light"]).pack(anchor="w")
+    current_status_label = tk.Label(status_frame, textvariable=license_status_var, 
+                                   font=("Arial", 11), fg="blue", bg=COLORS["light"])
     current_status_label.pack(anchor="w", pady=(5, 0))
     
     # Separator
-    ttk.Separator(license_win, orient="horizontal").pack(fill="x", padx=10, pady=5)
+    ttk.Separator(license_win, orient="horizontal").pack(fill="x", padx=20, pady=5)
     
     # Actions frame
-    actions_frame = tk.Frame(license_win, padx=10, pady=10)
+    actions_frame = tk.Frame(license_win, padx=20, pady=10, bg=COLORS["light"])
     actions_frame.pack(fill="both", expand=True, padx=10, pady=10)
     
-    tk.Label(actions_frame, text="License Actions:", font=("Arial", 12, "bold")).pack(anchor="w")
+    tk.Label(actions_frame, text="License Actions:", font=("Arial", 12, "bold"), 
+             bg=COLORS["light"]).pack(anchor="w")
     
     # Buttons
     btn_enter_license = tk.Button(actions_frame, text="Enter License Key", command=ask_for_license, 
-                                 bg="#0078D7", fg="white", width=20, font=("Arial", 10))
+                                 bg=COLORS["primary"], fg="white", width=20, font=("Arial", 10),
+                                 relief="flat", padx=10, pady=5)
     btn_enter_license.pack(pady=10)
     
     btn_check_status = tk.Button(actions_frame, text="Check License Status", 
                                 command=lambda: check_trial_or_license(), 
-                                bg="#28A745", fg="white", width=20, font=("Arial", 10))
+                                bg=COLORS["success"], fg="white", width=20, font=("Arial", 10),
+                                relief="flat", padx=10, pady=5)
     btn_check_status.pack(pady=5)
     
     btn_view_info = tk.Button(actions_frame, text="View License Information", 
                              command=show_license_info, 
-                             bg="#6A0DAD", fg="white", width=20, font=("Arial", 10))
+                             bg=COLORS["secondary"], fg="white", width=20, font=("Arial", 10),
+                             relief="flat", padx=10, pady=5)
     btn_view_info.pack(pady=10)
     
     # Close button
     btn_close = tk.Button(license_win, text="Close", command=license_win.destroy,
-                         bg="#DC3545", fg="white", width=15, font=("Arial", 10))
+                         bg=COLORS["danger"], fg="white", width=15, font=("Arial", 10, "bold"),
+                         relief="flat", padx=10, pady=5)
     btn_close.pack(pady=10)
 
 # ------------------ Universal Downloader ------------------
@@ -368,7 +551,7 @@ class UniversalDownloader:
     def __init__(self, url, fmt="best", save_path=None, progress_hook=None):
         self.url = url
         self.fmt = fmt
-        self.save_path = save_path or os.path.join(os.path.expanduser("~"), "Desktop")
+        self.save_path = save_path or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
         os.makedirs(self.save_path, exist_ok=True)
         self.progress_hook = progress_hook
 
@@ -399,11 +582,13 @@ def add_to_queue():
     if not url:
         messagebox.showerror("Error", "Please enter a URL!")
         return
-    save_path = filedialog.askdirectory(title="Select Save Location") or os.path.join(os.path.expanduser("~"), "Desktop")
+    save_path = filedialog.askdirectory(title="Select Save Location") or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
+    os.makedirs(save_path, exist_ok=True)
     item = {"url": url, "fmt": fmt, "save_path": save_path, "status": "Pending", "progress": 0}
     download_queue.append(item)
     paused_flags.append(False)
     create_queue_item(len(download_queue)-1)
+    url_entry.delete(0, tk.END)
 
 def instant_download():
     url = url_entry.get().strip()
@@ -411,43 +596,95 @@ def instant_download():
     if not url:
         messagebox.showerror("Error", "Please enter a URL!")
         return
-    save_path = filedialog.askdirectory(title="Select Save Location") or os.path.join(os.path.expanduser("~"), "Desktop")
+    save_path = filedialog.askdirectory(title="Select Save Location") or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
+    os.makedirs(save_path, exist_ok=True)
     item = {"url": url, "fmt": fmt, "save_path": save_path, "status": "Downloading", "progress": 0}
     download_queue.append(item)
     paused_flags.append(False)
     idx = len(download_queue)-1
     create_queue_item(idx)
     threading.Thread(target=download_worker, args=(idx,), daemon=True).start()
+    url_entry.delete(0, tk.END)
 
 def create_queue_item(idx):
     item = download_queue[idx]
-    frame = tk.Frame(queue_container, bd=2, relief="groove", padx=5, pady=5)
-    label = tk.Label(frame, text=get_filename_from_url(item['url']), font=("Arial", 10, "bold"), anchor="w")
-    label.pack(side="top", anchor="w", fill="x")
-    status_label = tk.Label(frame, text=f"{item['status']}", font=("Arial", 9), anchor="w")
-    status_label.pack(side="top", anchor="w", fill="x")
+    frame = tk.Frame(queue_container, bd=1, relief="solid", padx=10, pady=8, bg="white")
+    frame.pack(pady=4, fill="x", padx=5)
+    
+    # Header with title and status
+    header_frame = tk.Frame(frame, bg="white")
+    header_frame.pack(fill="x")
+    
+    title = item.get('title', get_filename_from_url(item['url']))
+    label = tk.Label(header_frame, text=title[:80] + "..." if len(title) > 80 else title, 
+                    font=("Arial", 10, "bold"), anchor="w", bg="white")
+    label.pack(side="left", fill="x", expand=True)
+    
+    status_label = tk.Label(header_frame, text=f"{item['status']}", 
+                           font=("Arial", 9, "bold"), anchor="e", bg="white")
+    status_label.pack(side="right")
+    
+    # Progress bar
     progress = ttk.Progressbar(frame, orient="horizontal", length=650, mode="determinate")
     progress['value'] = item['progress']
-    progress.pack(side="top", pady=3, fill="x")
-    frame.pack(pady=4, fill="x")
-    queue_frames.append({"frame": frame, "label": label, "status_label": status_label, "progress": progress})
+    progress.pack(side="top", pady=5, fill="x")
+    
+    # Format and actions
+    footer_frame = tk.Frame(frame, bg="white")
+    footer_frame.pack(fill="x")
+    
+    format_label = tk.Label(footer_frame, text=f"Format: {item['fmt']}", 
+                           font=("Arial", 8), anchor="w", bg="white", fg=COLORS["gray"])
+    format_label.pack(side="left")
+    
+    if item.get('source') == 'extension':
+        source_label = tk.Label(footer_frame, text="🌐 Browser", 
+                               font=("Arial", 8), bg="white", fg=COLORS["primary"])
+        source_label.pack(side="left", padx=(10, 0))
+    
+    queue_frames.append({"frame": frame, "label": label, "status_label": status_label, 
+                        "progress": progress, "format_label": format_label})
     update_queue_item_color(idx)
 
 def update_queue_item(idx):
+    if idx >= len(download_queue) or idx >= len(queue_frames):
+        return
+        
     item = download_queue[idx]
     frame_data = queue_frames[idx]
-    frame_data['label'].config(text=get_filename_from_url(item['url']))
+    
+    title = item.get('title', get_filename_from_url(item['url']))
+    frame_data['label'].config(text=title[:80] + "..." if len(title) > 80 else title)
     frame_data['status_label'].config(text=f"{item['status']}")
     frame_data['progress']['value'] = item['progress']
+    frame_data['format_label'].config(text=f"Format: {item['fmt']}")
     update_queue_item_color(idx)
 
 def update_queue_item_color(idx):
     item = download_queue[idx]
     frame_data = queue_frames[idx]
-    color_map = {"Pending":"lightgrey","Downloading":"lightgreen","Paused":"orange","Completed":"lightblue","Error":"red"}
-    frame_data['frame'].config(bg=color_map.get(item['status'], "white"))
-    frame_data['label'].config(bg=color_map.get(item['status'], "white"))
-    frame_data['status_label'].config(bg=color_map.get(item['status'], "white"))
+    color_map = {
+        "Pending": "#e5e7eb", 
+        "Downloading": "#d1fae5", 
+        "Paused": "#fef3c7", 
+        "Completed": "#dbeafe", 
+        "Error": "#fee2e2"
+    }
+    text_color_map = {
+        "Pending": "#374151",
+        "Downloading": "#065f46", 
+        "Paused": "#92400e", 
+        "Completed": "#1e40af", 
+        "Error": "#991b1b"
+    }
+    
+    bg_color = color_map.get(item['status'], "white")
+    text_color = text_color_map.get(item['status'], "#374151")
+    
+    frame_data['frame'].config(bg=bg_color)
+    frame_data['label'].config(bg=bg_color, fg=text_color)
+    frame_data['status_label'].config(bg=bg_color, fg=text_color)
+    frame_data['format_label'].config(bg=bg_color, fg=text_color)
 
 def start_selected():
     for idx, item in enumerate(download_queue):
@@ -471,9 +708,32 @@ def resume_selected():
             update_queue_item(idx)
             threading.Thread(target=download_worker, args=(idx,), daemon=True).start()
 
+def clear_completed():
+    global download_queue, paused_flags, queue_frames
+    
+    completed_indices = [i for i, item in enumerate(download_queue) if item["status"] == "Completed"]
+    
+    # Remove from the end to avoid index issues
+    for i in sorted(completed_indices, reverse=True):
+        if i < len(queue_frames):
+            queue_frames[i]['frame'].destroy()
+    
+    # Rebuild the lists
+    download_queue = [item for i, item in enumerate(download_queue) if i not in completed_indices]
+    paused_flags = [flag for i, flag in enumerate(paused_flags) if i not in completed_indices]
+    queue_frames = []
+    
+    # Recreate all queue items
+    for i in range(len(download_queue)):
+        create_queue_item(i)
+
 def download_worker(idx):
+    if idx >= len(download_queue):
+        return
+        
     item = download_queue[idx]
     url, fmt, save_path = item["url"], item["fmt"], item["save_path"]
+    title = item.get("title", get_filename_from_url(url))
 
     def progress_hook(d):
         if d['status'] == 'downloading':
@@ -484,94 +744,242 @@ def download_worker(idx):
             update_queue_item(idx)
 
     try:
+        log_text.insert(tk.END, f"🚀 Starting download: {title}\n")
+        log_text.see(tk.END)
+        
         downloader = UniversalDownloader(url, fmt, save_path, progress_hook)
         downloader.download()
         item["status"] = "Completed"
         update_queue_item(idx)
-        log_text.insert(tk.END, f"Download completed: {get_filename_from_url(url)}\n")
+        
+        success_msg = f"✅ Download completed: {title}\n"
+        log_text.insert(tk.END, success_msg)
         log_text.see(tk.END)
+        
     except Exception as e:
         item["status"] = "Error"
         update_queue_item(idx)
-        log_text.insert(tk.END, f"Error: {e}\n")
+        error_msg = f"❌ Download failed: {title} - {str(e)}\n"
+        log_text.insert(tk.END, error_msg)
         log_text.see(tk.END)
 
-# ------------------ GUI ------------------
+# ------------------ Modern GUI ------------------
 root = tk.Tk()
-root.title("SwiftHarryDM - Universal Downloader")
+root.title(f"SwiftHarryDM v{CURRENT_VERSION} - Universal Downloader")
 root.geometry("1000x800")
+root.configure(bg=COLORS["light"])
 
-# Menu
-menu_bar = tk.Menu(root)
+# Apply modern theme
+style = ttk.Style()
+style.theme_use('clam')
+
+# Configure styles
+style.configure('TFrame', background=COLORS["light"])
+style.configure('TLabel', background=COLORS["light"], font=('Arial', 10))
+style.configure('TButton', font=('Arial', 10))
+style.configure('TEntry', font=('Arial', 11))
+style.configure('TCombobox', font=('Arial', 11))
+
+# Modern Menu
+menu_bar = tk.Menu(root, bg=COLORS["light"], fg=COLORS["dark"], font=('Arial', 10))
+
+# File Menu
+file_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["light"], fg=COLORS["dark"])
+file_menu.add_command(label="Clear Completed", command=clear_completed)
+file_menu.add_separator()
+file_menu.add_command(label="Exit", command=root.quit)
+menu_bar.add_cascade(label="File", menu=file_menu)
 
 # License Menu
-license_menu = tk.Menu(menu_bar, tearoff=0)
+license_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["light"], fg=COLORS["dark"])
 license_menu.add_command(label="License Management", command=show_license_window)
 license_menu.add_command(label="View License Info", command=show_license_info)
 menu_bar.add_cascade(label="License", menu=license_menu)
 
 # Help Menu
-help_menu = tk.Menu(menu_bar, tearoff=0)
+help_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["light"], fg=COLORS["dark"])
 help_menu.add_command(label="Check for Updates", command=lambda: check_for_updates(auto=False))
+help_menu.add_command(label="About SwiftHarryDM", command=show_about)
 menu_bar.add_cascade(label="Help", menu=help_menu)
 
 root.config(menu=menu_bar)
 
-# License status (minimal display in main window)
-license_status_var = tk.StringVar(value="Checking...")
-status_frame = tk.Frame(root)
-status_frame.pack(pady=5)
-tk.Label(status_frame, text="Status:", font=("Arial", 11)).pack(side="left", padx=5)
-tk.Label(status_frame, textvariable=license_status_var, font=("Arial", 11, "bold"), fg="blue").pack(side="left", padx=5)
+# Header Frame
+header_frame = tk.Frame(root, bg=COLORS["primary"], height=80)
+header_frame.pack(fill="x", side="top")
+header_frame.pack_propagate(False)
 
-# URL input
-tk.Label(root, text="Enter URL:", font=("Arial", 11)).pack(pady=5)
-url_entry = tk.Entry(root, width=100, font=("Arial", 11))
-url_entry.pack(pady=5)
+# Header Content
+header_content = tk.Frame(header_frame, bg=COLORS["primary"])
+header_content.pack(expand=True, fill="both", padx=20)
+
+tk.Label(header_content, text="🚀 SwiftHarryDM", font=("Arial", 24, "bold"), 
+         bg=COLORS["primary"], fg="white").pack(side="left")
+
+tk.Label(header_content, text=f"v{CURRENT_VERSION}", font=("Arial", 12), 
+         bg=COLORS["primary"], fg="white").pack(side="left", padx=(10, 0))
+
+# Status indicators
+status_frame = tk.Frame(header_content, bg=COLORS["primary"])
+status_frame.pack(side="right")
+
+license_status_var = tk.StringVar(value="Checking...")
+license_label = tk.Label(status_frame, textvariable=license_status_var, font=("Arial", 10, "bold"), 
+                        bg=COLORS["primary"], fg="white")
+license_label.pack(side="top", anchor="e")
+
+extension_status_var = tk.StringVar(value="🔌 Extension: Connecting...")
+extension_label = tk.Label(status_frame, textvariable=extension_status_var, font=("Arial", 9), 
+                          bg=COLORS["primary"], fg="#d1fae5")
+extension_label.pack(side="top", anchor="e")
+
+# Main Content Frame
+main_frame = tk.Frame(root, bg=COLORS["light"], padx=20, pady=20)
+main_frame.pack(fill="both", expand=True)
+
+# URL Input Section
+input_frame = tk.Frame(main_frame, bg=COLORS["light"])
+input_frame.pack(fill="x", pady=(0, 15))
+
+tk.Label(input_frame, text="Enter URL:", font=("Arial", 11, "bold"), 
+         bg=COLORS["light"]).pack(anchor="w", pady=(0, 5))
+
+url_entry_frame = tk.Frame(input_frame, bg=COLORS["light"])
+url_entry_frame.pack(fill="x")
+
+url_entry = tk.Entry(url_entry_frame, width=80, font=("Arial", 11), relief="solid", bd=1)
+url_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
 # Format selection
-tk.Label(root, text="Select Format:", font=("Arial", 11)).pack(pady=5)
-format_var = tk.StringVar(value="best")
-format_menu = ttk.Combobox(root, textvariable=format_var,
-                           values=["best", "1080", "720", "mp3"], state="readonly", font=("Arial", 11))
-format_menu.pack(pady=5)
+format_frame = tk.Frame(input_frame, bg=COLORS["light"])
+format_frame.pack(fill="x", pady=(10, 0))
 
-# Buttons
-btn_frame = tk.Frame(root)
-btn_frame.pack(pady=10)
-btn_add = tk.Button(btn_frame, text="Add to Queue", command=add_to_queue, bg="#0078D7", fg="white", width=18, font=("Arial",10))
+tk.Label(format_frame, text="Select Format:", font=("Arial", 11, "bold"), 
+         bg=COLORS["light"]).pack(side="left")
+
+format_var = tk.StringVar(value="best")
+format_menu = ttk.Combobox(format_frame, textvariable=format_var,
+                           values=["best", "1080", "720", "mp3"], state="readonly", 
+                           width=15, font=("Arial", 11))
+format_menu.pack(side="left", padx=(10, 0))
+
+# Action Buttons
+btn_frame = tk.Frame(main_frame, bg=COLORS["light"])
+btn_frame.pack(fill="x", pady=15)
+
+def create_modern_button(parent, text, command, color, width=15):
+    return tk.Button(parent, text=text, command=command, 
+                    bg=color, fg="white", width=width, font=("Arial", 10, "bold"),
+                    relief="flat", padx=15, pady=8, bd=0)
+
+btn_add = create_modern_button(btn_frame, "Add to Queue", add_to_queue, COLORS["primary"])
 btn_add.grid(row=0, column=0, padx=5)
-btn_instant = tk.Button(btn_frame, text="Instant Download", command=instant_download, bg="#107C10", fg="white", width=18, font=("Arial",10))
+
+btn_instant = create_modern_button(btn_frame, "Instant Download", instant_download, COLORS["success"])
 btn_instant.grid(row=0, column=1, padx=5)
-btn_start = tk.Button(btn_frame, text="Start Selected", command=start_selected, bg="#28A745", fg="white", width=18, font=("Arial",10))
+
+btn_start = create_modern_button(btn_frame, "Start Selected", start_selected, COLORS["success"])
 btn_start.grid(row=0, column=2, padx=5)
-btn_pause = tk.Button(btn_frame, text="Pause Selected", command=pause_selected, bg="#FFA500", fg="white", width=18, font=("Arial",10))
+
+btn_pause = create_modern_button(btn_frame, "Pause Selected", pause_selected, COLORS["warning"])
 btn_pause.grid(row=0, column=3, padx=5)
-btn_resume = tk.Button(btn_frame, text="Resume Selected", command=resume_selected, bg="#6A0DAD", fg="white", width=18, font=("Arial",10))
+
+btn_resume = create_modern_button(btn_frame, "Resume Selected", resume_selected, COLORS["secondary"])
 btn_resume.grid(row=0, column=4, padx=5)
 
-# Queue container
-tk.Label(root, text="Download Queue:", font=("Arial", 11, "bold")).pack(pady=5)
-queue_canvas = tk.Canvas(root)
-queue_scrollbar = ttk.Scrollbar(root, orient="vertical", command=queue_canvas.yview)
-queue_container = tk.Frame(queue_canvas)
+btn_clear_completed = create_modern_button(btn_frame, "Clear Completed", clear_completed, COLORS["danger"])
+btn_clear_completed.grid(row=0, column=5, padx=5)
+
+# Queue Section
+queue_section = tk.Frame(main_frame, bg=COLORS["light"])
+queue_section.pack(fill="both", expand=True, pady=(20, 0))
+
+queue_header = tk.Frame(queue_section, bg=COLORS["light"])
+queue_header.pack(fill="x")
+
+tk.Label(queue_header, text="Download Queue:", font=("Arial", 14, "bold"), 
+         bg=COLORS["light"]).pack(side="left")
+
+queue_count_var = tk.StringVar(value="(0 items)")
+queue_count_label = tk.Label(queue_header, textvariable=queue_count_var, font=("Arial", 11), 
+                            bg=COLORS["light"], fg=COLORS["gray"])
+queue_count_label.pack(side="left", padx=(10, 0))
+
+# Queue container with scroll
+queue_container_frame = tk.Frame(queue_section, bg=COLORS["light"])
+queue_container_frame.pack(fill="both", expand=True, pady=(10, 0))
+
+queue_canvas = tk.Canvas(queue_container_frame, bg="white", highlightthickness=0)
+queue_scrollbar = ttk.Scrollbar(queue_container_frame, orient="vertical", command=queue_canvas.yview)
+queue_container = tk.Frame(queue_canvas, bg="white")
+
 queue_container.bind("<Configure>", lambda e: queue_canvas.configure(scrollregion=queue_canvas.bbox("all")))
-queue_canvas.create_window((0,0), window=queue_container, anchor="nw")
-queue_canvas.configure(yscrollcommand=queue_scrollbar.set, height=250)
+queue_canvas.create_window((0,0), window=queue_container, anchor="nw", width=queue_canvas.winfo_width())
+queue_canvas.configure(yscrollcommand=queue_scrollbar.set)
+
 queue_canvas.pack(side="left", fill="both", expand=True)
 queue_scrollbar.pack(side="right", fill="y")
 
-# Log box
-tk.Label(root, text="Log:", font=("Arial", 11, "bold")).pack(pady=5)
-log_text = tk.Text(root, height=25, wrap="word", font=("Arial",10))
-log_text.pack(pady=5, fill="both", expand=True)
+def update_queue_display(event):
+    queue_canvas.configure(scrollregion=queue_canvas.bbox("all"))
+    queue_canvas.itemconfig('all', width=queue_canvas.winfo_width())
 
-# Auto-update check at start
+queue_canvas.bind('<Configure>', update_queue_display)
+
+# Log Section
+log_section = tk.Frame(main_frame, bg=COLORS["light"])
+log_section.pack(fill="x", pady=(20, 0))
+
+tk.Label(log_section, text="Activity Log:", font=("Arial", 14, "bold"), 
+         bg=COLORS["light"]).pack(anchor="w")
+
+log_frame = tk.Frame(log_section, bg=COLORS["light"])
+log_frame.pack(fill="x", pady=(10, 0))
+
+log_text = tk.Text(log_frame, height=8, wrap="word", font=("Consolas", 9), 
+                  relief="solid", bd=1, bg="#1e1e1e", fg="#00ff00")
+log_text.pack(side="left", fill="both", expand=True)
+
+log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=log_text.yview)
+log_text.configure(yscrollcommand=log_scrollbar.set)
+log_scrollbar.pack(side="right", fill="y")
+
+# Footer
+footer_frame = tk.Frame(root, bg=COLORS["dark"], height=30)
+footer_frame.pack(fill="x", side="bottom")
+footer_frame.pack_propagate(False)
+
+footer_label = tk.Label(footer_frame, text="🚀 SwiftHarryDM - Universal Downloader | © 2024 All rights reserved", 
+                       font=("Arial", 9), bg=COLORS["dark"], fg="white")
+footer_label.pack(expand=True)
+
+# ------------------ Startup Functions ------------------
+def update_queue_count():
+    total = len(download_queue)
+    active = len([item for item in download_queue if item["status"] == "Downloading"])
+    queue_count_var.set(f"({total} items, {active} active)")
+    root.after(1000, update_queue_count)
+
+def check_extension_connection():
+    try:
+        response = requests.get("http://127.0.0.1:5001/health", timeout=2)
+        if response.status_code == 200:
+            extension_status_var.set("🔌 Extension: Connected ✓")
+        else:
+            extension_status_var.set("🔌 Extension: Port 5001 busy")
+    except:
+        extension_status_var.set("🔌 Extension: Not connected")
+    root.after(5000, check_extension_connection)
+
+# ------------------ Initialize App ------------------
 auto_update_check()
+root.after(2000, check_extension_connection)
+root.after(1000, update_queue_count)
 
 # Check trial/license at startup
 if not check_trial_or_license():
     root.destroy()
     exit()
 
+# Start the main loop
 root.mainloop()
