@@ -13,7 +13,8 @@ download_queue = []
 paused_flags = []
 queue_frames = []
 CURRENT_VERSION = "1.0.0"
-UPDATE_CHECK_URL = "https://raw.githubusercontent.com/yourusername/SwiftHarryDM/main/version.txt"
+UPDATE_CHECK_URL = "https://swiftharrydm.harshchaudhary.com.np/version.txt"
+DOWNLOAD_PAGE_URL = "https://swiftharrydm.harshchaudhary.com.np/downloads"
 
 # ------------------ Utilities ------------------
 def clean_percent(percent_str):
@@ -25,23 +26,36 @@ def clean_percent(percent_str):
         return 0
 
 def sanitize_filename(name):
-    # Remove illegal characters for Windows filenames
     return re.sub(r'[<>:"/\\|?*]', '_', name)
 
 def get_filename_from_url(url):
     return sanitize_filename(url.split('/')[-1])
 
-def check_for_updates():
+# ------------------ Update Checker ------------------
+def check_for_updates(auto=False):
     try:
         resp = requests.get(UPDATE_CHECK_URL, timeout=5)
         latest_version = resp.text.strip()
         if latest_version != CURRENT_VERSION:
-            if messagebox.askyesno("Update Available", f"A new version {latest_version} is available. Visit download page?"):
-                import webbrowser
-                webbrowser.open("https://github.com/yourusername/SwiftHarryDM/releases")
-    except:
-        log_text.insert(tk.END, "Unable to check updates.\n")
+            if auto:
+                log_text.insert(tk.END, f"Update available: {latest_version}\n")
+                log_text.see(tk.END)
+            else:
+                if messagebox.askyesno("Update Available", f"A new version {latest_version} is available. Do you want to download it?"):
+                    import webbrowser
+                    webbrowser.open(DOWNLOAD_PAGE_URL)
+        elif not auto:
+            messagebox.showinfo("No Update", "You are running the latest version.")
+    except Exception as e:
+        if not auto:
+            messagebox.showwarning("Update Check Failed", f"Unable to check updates.\nError: {e}")
+        log_text.insert(tk.END, f"Update check failed: {e}\n")
+        log_text.see(tk.END)
 
+def auto_update_check():
+    threading.Thread(target=check_for_updates, kwargs={"auto": True}, daemon=True).start()
+
+# ------------------ License ------------------
 def show_license():
     try:
         with open("LICENSE.txt","r") as f:
@@ -78,7 +92,6 @@ class UniversalDownloader:
                 if self.fmt.lower() == "mp3":
                     convert_to_mp3(filename, os.path.splitext(filename)[0]+".mp3")
         except Exception as e:
-            # fallback for direct file links
             if self.url.startswith("http"):
                 Downloader(self.url, self.save_path).download()
             else:
@@ -197,7 +210,7 @@ root.geometry("1000x750")
 # Menu
 menu_bar = tk.Menu(root)
 help_menu = tk.Menu(menu_bar, tearoff=0)
-help_menu.add_command(label="Check for Updates", command=check_for_updates)
+help_menu.add_command(label="Check for Updates", command=lambda: check_for_updates(auto=False))
 help_menu.add_command(label="License", command=show_license)
 menu_bar.add_cascade(label="Help", menu=help_menu)
 root.config(menu=menu_bar)
@@ -240,6 +253,6 @@ log_text = tk.Text(root, height=25, wrap="word", font=("Arial",10))
 log_text.pack(pady=5, fill="both", expand=True)
 
 # Auto-update check at start
-threading.Thread(target=check_for_updates, daemon=True).start()
+auto_update_check()
 
 root.mainloop()
