@@ -1,0 +1,21 @@
+License Key Policy — SwiftHarryDM
+
+1. License Format
+   - License keys are 24 alphanumeric characters, e.g. ABCD-EFGH-IJKL-MNOP-QRST-UVWX (formatted with dashes for readability).
+
+2. Trial
+   - Each machine is eligible for a single 7-day trial. Reinstalling OS or uninstalling/reinstalling application will not reset the trial.
+
+3. Activation
+   - Activation requires online verification with our license server. Offline activation may be supported via support contact.
+
+4. Transfer / Re-activation
+   - Transferring a license to another machine may require deactivation of previous machine. Contact support for assistance.
+
+5. Misuse
+   - Sharing license keys publicly, generating multiple keys illicitly, or otherwise violating EULA will result in license termination.
+
+6. Revocation
+   - Licensor reserves the right to revoke licenses for fraud, misuse or violation of terms.
+
+Support & activation issues: harshchy143@gmail.com

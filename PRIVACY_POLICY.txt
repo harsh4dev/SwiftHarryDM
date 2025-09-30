@@ -1,0 +1,40 @@
+Privacy Policy — SwiftHarryDM
+
+Last updated: October 2025
+
+1. Introduction
+   Harsh Chaudhary ("we", "us", "our") respects your privacy. This policy explains what data we collect, why, and how it is used.
+
+2. Data We Collect
+   a. Required for Licensing and Trial:
+      - Machine Identifier (hashed hardware ID) — used to bind a license/trial to a machine.
+      - License key (when entered) — for verification.
+      - Timestamps of activation/verification.
+   b. Optional (only with explicit consent):
+      - Anonymous telemetry: app version, OS, basic performance stats (to improve product).
+   c. Not collected:
+      - We DO NOT collect personal files, browsing history, passwords, or content of downloads.
+
+3. How We Use Data
+   - License verification and anti-fraud checks.
+   - Provide updates and support.
+   - Improve product quality via optional telemetry.
+
+4. Data Sharing
+   - We do not sell your data.
+   - Data may be shared with trusted third-party services used for payments, email delivery, or license verification under confidentiality.
+
+5. Data Storage & Retention
+   - License records stored on our server and retained for support and anti-fraud. We retain minimal data (license key, hashed machine id, activation time).
+   - Delete requests: contact harshchy143@gmail.com.
+
+6. Security
+   - We use industry standard security (HTTPS, hashed identifiers). However, no data transmission is 100% secure.
+
+7. Children
+   - Software is not directed at children. Users under applicable age should not use it without parental consent.
+
+8. Contact
+   For privacy concerns: harshchy143@gmail.com
+
+By using SwiftHarryDM you consent to this Privacy Policy.

@@ -1,0 +1,18 @@
+SwiftHarryDM — Third-Party Attributions
+
+This product bundles or uses the following third-party software:
+
+1. yt-dlp
+   - License: Unlicense / Public domain (or per yt-dlp's license). See https://github.com/yt-dlp/yt-dlp
+2. FFmpeg
+   - License: LGPL/GPL (depending on build). See https://ffmpeg.org/
+3. Python
+   - License: PSF License
+4. Requests (Python)
+   - License: Apache 2.0
+
+You must comply with the licenses of these components. Where applicable, the source code or notices for those components are available from their respective projects.
+
+If you distribute a statically linked or GPL-licensed build of FFmpeg or others, ensure compliance with their license requirements (source availability, notices).
+
+For questions: harshchy143@gmail.com
