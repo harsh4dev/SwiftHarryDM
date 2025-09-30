@@ -13,6 +13,7 @@ from src.downloader import Downloader
 from utils import convert_to_mp3, format_mapping
 from yt_dlp import YoutubeDL
 from flask import Flask, request, jsonify
+from download_window import show_download_window, close_download_window, active_download_windows
 
 # ------------------ Globals ------------------
 download_queue = []
@@ -894,11 +895,18 @@ def download_worker(idx):
     item = download_queue[idx]
     url, fmt, save_path = item["url"], item["fmt"], item["save_path"]
     title = item.get("title", get_filename_from_url(url))
+    
+    # Check if this is from extension
+    is_extension = item.get('source') == 'extension'
 
     print(f"🔧 [WORKER] Starting download worker for: {title}")
     print(f"🔧 [WORKER] URL: {url}")
     print(f"🔧 [WORKER] Format: {fmt}")
     print(f"🔧 [WORKER] Save path: {save_path}")
+    print(f"🔧 [WORKER] From extension: {is_extension}")
+
+    # Show download progress window - ADD THIS LINE
+    root.after(0, lambda: show_download_window(root, item, download_queue, idx))
 
     def progress_hook(d):
         if d['status'] == 'downloading':
@@ -917,7 +925,8 @@ def download_worker(idx):
         log_text.see(tk.END)
         print(f"🎯 [WORKER] Calling UniversalDownloader for: {title}")
         
-        downloader = UniversalDownloader(url, fmt, save_path, progress_hook)
+        # Pass the extension flag to downloader - UPDATE THIS LINE
+        downloader = UniversalDownloader(url, fmt, save_path, progress_hook, is_extension)
         downloader.download()
         item["status"] = "Completed"
         update_queue_item(idx)
@@ -926,6 +935,9 @@ def download_worker(idx):
         log_text.insert(tk.END, success_msg)
         log_text.see(tk.END)
         print(f"🎉 [WORKER] Download successful: {title}")
+        
+        # Close download window after completion - ADD THIS LINE
+        root.after(100, lambda: close_download_window(idx))
         
     except Exception as e:
         item["status"] = "Error"
@@ -936,6 +948,9 @@ def download_worker(idx):
         print(f"💥 [WORKER] Download failed: {title} - Error: {str(e)}")
         import traceback
         traceback.print_exc()
+        
+        # Close download window on error - ADD THIS LINE
+        root.after(100, lambda: close_download_window(idx))
 
 # ------------------ Modern GUI ------------------
 root = tk.Tk()
