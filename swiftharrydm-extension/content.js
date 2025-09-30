@@ -379,8 +379,11 @@ class MediaDetector {
 
     async startDownload(media, format, instant = false) {
         // Use the first source URL or fallback to page URL
-        const downloadUrl = media.sources?.[0]?.url || media.url || window.location.href;
-        
+        let downloadUrl = media.sources?.[0]?.url || media.url || window.location.href;
+    
+        // CRITICAL FIX: Clean YouTube URLs to remove playlist parameters
+        downloadUrl = this.cleanVideoUrl(downloadUrl);
+    
         const downloadData = {
             url: downloadUrl,
             title: media.title,
@@ -396,22 +399,70 @@ class MediaDetector {
 
         try {
             const response = await chrome.runtime.sendMessage({
-                action: 'downloadMedia',
-                data: downloadData
-            });
+            action: 'downloadMedia',
+            data: downloadData
+        });
+        
+        console.log('📥 Extension response:', response);
+        
+        if (response && response.success) {
+            this.showSuccessNotification(media.title, response.queuePosition);
+        } else {
+            this.showErrorNotification(response?.error || 'Download failed');
+        }
+    } catch (error) {
+        console.error('❌ Download error:', error);
+        this.showErrorNotification('Make sure SwiftHarryDM app is running');
+    }
+}
+
+// ADD THIS NEW METHOD to clean YouTube URLs
+cleanVideoUrl(url) {
+    console.log('🔧 Cleaning URL:', url);
+    
+    // Handle YouTube watch URLs
+    if (url.includes('youtube.com/watch') && url.includes('v=')) {
+        try {
+            const urlObj = new URL(url);
+            const videoId = urlObj.searchParams.get('v');
             
-            console.log('📥 Extension response:', response);
-            
-            if (response && response.success) {
-                this.showSuccessNotification(media.title, response.queuePosition);
-            } else {
-                this.showErrorNotification(response?.error || 'Download failed');
+            if (videoId) {
+                // Create clean URL with ONLY the video ID
+                const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                console.log('✅ Cleaned YouTube URL:', cleanUrl);
+                return cleanUrl;
             }
         } catch (error) {
-            console.error('❌ Download error:', error);
-            this.showErrorNotification('Make sure SwiftHarryDM app is running');
+            console.error('❌ URL cleaning failed:', error);
         }
     }
+    
+    // Handle YouTube short URLs
+    else if (url.includes('youtu.be/')) {
+        try {
+            const urlObj = new URL(url);
+            const videoId = urlObj.pathname.replace('/', '');
+            
+            if (videoId) {
+                const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                console.log('✅ Converted short URL:', cleanUrl);
+                return cleanUrl;
+            }
+        } catch (error) {
+            console.error('❌ Short URL conversion failed:', error);
+        }
+    }
+    
+    // Handle other video platforms if needed
+    else if (url.includes('vimeo.com/')) {
+        // Clean Vimeo URLs if necessary
+        console.log('🎬 Vimeo URL detected:', url);
+    }
+    
+    // Return original URL if no cleaning needed
+    console.log('🔧 Using original URL:', url);
+    return url;
+}
 
     showSuccessNotification(title, queuePosition) {
         this.showNotification(
@@ -557,16 +608,19 @@ class MediaDetector {
     }
 
     handleContextMenuDownload(context) {
-        if (context.mediaType === 'video' || context.mediaType === 'audio') {
-            this.showMediaSelectionPopup();
-        } else if (context.linkUrl) {
-            this.startDownload({
-                url: context.linkUrl,
-                title: context.linkText || 'Linked Media',
-                type: 'video_link'
-            }, 'best', true);
-        }
+    if (context.mediaType === 'video' || context.mediaType === 'audio') {
+        this.showMediaSelectionPopup();
+    } else if (context.linkUrl) {
+        // Clean the URL before downloading
+        const cleanUrl = this.cleanVideoUrl(context.linkUrl);
+        
+        this.startDownload({
+            url: cleanUrl,
+            title: context.linkText || 'Linked Media',
+            type: 'video_link'
+        }, 'best', true);
     }
+}
 
     downloadAllMedia() {
         if (this.mediaElements.size === 0) {
@@ -595,39 +649,42 @@ class MediaDetector {
     }
 
     detectVideoLinks() {
-        // Simple video link detection for common platforms
-        const patterns = [
-            /youtube\.com\/watch\?v=/i,
-            /youtu\.be\//i,
-            /vimeo\.com\//i,
-            /dailymotion\.com\//i
-        ];
+    // Simple video link detection for common platforms
+    const patterns = [
+        /youtube\.com\/watch\?v=/i,
+        /youtu\.be\//i,
+        /vimeo\.com\//i,
+        /dailymotion\.com\//i
+    ];
 
-        // Check if current page is a video page
-        const currentUrl = window.location.href;
-        if (patterns.some(pattern => pattern.test(currentUrl))) {
-            const pageMedia = {
-                type: 'video_page',
-                url: currentUrl,
-                title: document.title,
-                element: document.body
-            };
-            this.mediaElements.set('page_video', pageMedia);
-            
-            // Add download button to page
-            const pageButton = this.createDownloadButton();
-            pageButton.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg><span>Download Page</span>`;
-            pageButton.style.position = 'fixed';
-            pageButton.style.top = '20px';
-            pageButton.style.right = '20px';
-            pageButton.style.zIndex = '10000';
-            pageButton.addEventListener('click', () => {
-                this.showDownloadPopup('page_video');
-            });
-            document.body.appendChild(pageButton);
-            this.downloadButtons.add(pageButton);
-        }
+    // Check if current page is a video page
+    const currentUrl = window.location.href;
+    if (patterns.some(pattern => pattern.test(currentUrl))) {
+        // Clean the URL for the page video
+        const cleanUrl = this.cleanVideoUrl(currentUrl);
+        
+        const pageMedia = {
+            type: 'video_page',
+            url: cleanUrl, // Use cleaned URL instead of original
+            title: document.title,
+            element: document.body
+        };
+        this.mediaElements.set('page_video', pageMedia);
+        
+        // Add download button to page
+        const pageButton = this.createDownloadButton();
+        pageButton.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg><span>Download Page</span>`;
+        pageButton.style.position = 'fixed';
+        pageButton.style.top = '20px';
+        pageButton.style.right = '20px';
+        pageButton.style.zIndex = '10000';
+        pageButton.addEventListener('click', () => {
+            this.showDownloadPopup('page_video');
+        });
+        document.body.appendChild(pageButton);
+        this.downloadButtons.add(pageButton);
     }
+}
 }
 
 // Initialize immediately

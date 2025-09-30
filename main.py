@@ -595,13 +595,14 @@ def show_license_window():
 
 # ------------------ Universal Downloader ------------------
 class UniversalDownloader:
-    def __init__(self, url, fmt="best", save_path=None, progress_hook=None):
+    def __init__(self, url, fmt="best", save_path=None, progress_hook=None, is_extension=False):
         self.url = url
         self.fmt = fmt
         self.save_path = save_path or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
-        os.makedirs(self.save_path, exist_ok=True)
         self.progress_hook = progress_hook
-        print(f"🔧 [DOWNLOADER] Initialized: {url} -> {fmt} -> {self.save_path}")
+        self.is_extension = is_extension  # New flag to detect extension downloads
+        os.makedirs(self.save_path, exist_ok=True)
+        print(f"🔧 [DOWNLOADER] Initialized: {url} -> {fmt} -> {self.save_path} | Extension: {is_extension}")
 
     def download(self):
         try:
@@ -613,12 +614,25 @@ class UniversalDownloader:
                 "outtmpl": os.path.join(self.save_path, "%(title)s.%(ext)s"),
                 "progress_hooks": [self.progress_hook] if self.progress_hook else [],
                 "merge_output_format": "mp4",
-                "noplaylist": False,
                 "ignoreerrors": True,  # Continue on download errors
                 "retries": 10,  # Increase retries
                 "fragment_retries": 10,
                 "skip_unavailable_fragments": True,
             }
+            
+            # CRITICAL FIX: Force single video download ONLY for extension requests
+            if self.is_extension:
+                print("🔧 [DOWNLOADER] Extension download detected - forcing SINGLE VIDEO (no playlist)")
+                opts.update({
+                    "noplaylist": True,  # THIS IS THE KEY - don't download playlist
+                    "extract_flat": False,
+                })
+            else:
+                print("🔧 [DOWNLOADER] Manual app download - playlist downloads ALLOWED")
+                # Keep default behavior (playlist downloads enabled)
+                opts.update({
+                    "noplaylist": False,  # Allow playlists for manual downloads
+                })
             
             # Special handling for problematic sites
             if "facebook.com" in self.url:
