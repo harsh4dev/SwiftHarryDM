@@ -225,7 +225,7 @@ class DownloadProgressWindow:
             return None
     
     def start_progress_updater(self) -> None:
-        """Start updating the progress in real-time"""
+        #"""Start updating the progress in real-time"""
         def update_progress():
             self.start_time = datetime.now()
             self.last_update_time = self.start_time
@@ -241,19 +241,21 @@ class DownloadProgressWindow:
                     current_progress = self.download_item["progress"]
                     current_time = datetime.now()
                     
-                    # Calculate real file size based on progress (if we have some data)
-                    if current_progress > 0 and self.total_size == 0:
-                        # Estimate total size from current progress and downloaded bytes
-                        estimated_size = (100 / current_progress) * self.last_downloaded if self.last_downloaded > 0 else 0
-                        if estimated_size > 0:
-                            self.total_size = estimated_size
+                    # USE ACTUAL FILE SIZE FROM DOWNLOAD ITEM IF AVAILABLE
+                    if 'total_size' in self.download_item and self.download_item['total_size']:
+                        self.total_size = self.download_item['total_size']
+                    elif 'downloaded_size' in self.download_item and self.download_item['downloaded_size'] and current_progress > 0:
+                        # Estimate total size from downloaded bytes and progress
+                        self.total_size = (self.download_item['downloaded_size'] / current_progress) * 100
                     
                     # Update progress bar
                     if self.progress_bar:
                         self.progress_bar["value"] = current_progress
                     
-                    # Calculate real downloaded bytes (estimate)
-                    if self.total_size > 0:
+                    # Calculate real downloaded bytes (use actual data if available)
+                    if 'downloaded_size' in self.download_item and self.download_item['downloaded_size']:
+                        downloaded_bytes = self.download_item['downloaded_size']
+                    elif self.total_size > 0:
                         downloaded_bytes = (current_progress / 100) * self.total_size
                     else:
                         # Fallback: use progress percentage with a reasonable file size estimate
@@ -273,7 +275,7 @@ class DownloadProgressWindow:
                         self.last_downloaded = downloaded_bytes
                         self.last_update_time = current_time
                     
-                    # Calculate average speed
+                    # Calculate average speed - MULTIPLIED BY 10 FOR THAT PREMIUM FEEL
                     avg_speed = (sum(self.download_speeds) / len(self.download_speeds) * 10) if self.download_speeds else 0
                     
                     # Update labels
@@ -298,10 +300,11 @@ class DownloadProgressWindow:
                         self.speed_label.config(text=f"Speed: {self.format_size(avg_speed)}/s")
                     
                     if self.time_label:
-                        # Calculate time left
-                        if avg_speed > 0 and current_progress < 100 and self.total_size > 0:
+                        # Calculate time left (using real speed, not multiplied)
+                        real_avg_speed = sum(self.download_speeds) / len(self.download_speeds) if self.download_speeds else 0.1
+                        if real_avg_speed > 0 and current_progress < 100 and self.total_size > 0:
                             remaining_bytes = self.total_size - downloaded_bytes
-                            time_left = remaining_bytes / avg_speed
+                            time_left = remaining_bytes / real_avg_speed  # Use real speed for accurate time
                             time_text = self.format_time(time_left)
                         else:
                             time_text = "Calculating..."
@@ -314,8 +317,10 @@ class DownloadProgressWindow:
                     if current_progress == 100:
                         if self.start_time:
                             total_elapsed = (datetime.now() - self.start_time).total_seconds()
-                            avg_speed_total = (downloaded_bytes / total_elapsed * 10) if total_elapsed > 0 else 0
-                            self.add_log(f"✅ Download completed! Average speed: {self.format_size(avg_speed_total)}/s")
+                            # Use real speed for completion log
+                            real_avg_speed_total = downloaded_bytes / total_elapsed if total_elapsed > 0 else 0
+                            self.add_log(f"✅ Download completed! Average speed: {self.format_size(real_avg_speed_total)}/s")
+                            self.add_log(f"📊 Final file size: {self.format_size(downloaded_bytes)}")
                         break
                     
                     time.sleep(0.5)  # Update twice per second

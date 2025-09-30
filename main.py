@@ -905,18 +905,42 @@ def download_worker(idx):
     print(f"🔧 [WORKER] Save path: {save_path}")
     print(f"🔧 [WORKER] From extension: {is_extension}")
 
-    # Show download progress window - ADD THIS LINE
+    # Show download progress window
     root.after(0, lambda: show_download_window(root, item, download_queue, idx))
 
+    # Store file size information
+    total_size = 0
+    downloaded_size = 0
+
     def progress_hook(d):
+        nonlocal total_size, downloaded_size
+        
         if d['status'] == 'downloading':
-            item['progress'] = clean_percent(d.get('_percent_str','0%'))
+            # Get actual file size information from yt-dlp
+            if 'total_bytes' in d and d['total_bytes']:
+                total_size = d['total_bytes']
+                item['total_size'] = total_size  # Store in item for download window
+            
+            if 'downloaded_bytes' in d and d['downloaded_bytes']:
+                downloaded_size = d['downloaded_bytes']
+                item['downloaded_size'] = downloaded_size
+            
+            # Calculate progress percentage
+            if total_size > 0:
+                progress_percent = (downloaded_size / total_size) * 100
+            else:
+                progress_percent = clean_percent(d.get('_percent_str','0%'))
+            
+            item['progress'] = progress_percent
             update_queue_item(idx)
+            
             # Debug progress
-            if item['progress'] % 20 == 0:  # Log every 20%
-                print(f"📊 [WORKER] Progress: {item['progress']}% - {title}")
+            if progress_percent % 20 == 0:  # Log every 20%
+                print(f"📊 [WORKER] Progress: {progress_percent:.1f}% - {title}")
+                
         elif d['status'] == 'finished':
             item['progress'] = 100
+            item['total_size'] = total_size  # Ensure final size is stored
             update_queue_item(idx)
             print(f"✅ [WORKER] Download finished: {title}")
 
@@ -925,7 +949,7 @@ def download_worker(idx):
         log_text.see(tk.END)
         print(f"🎯 [WORKER] Calling UniversalDownloader for: {title}")
         
-        # Pass the extension flag to downloader - UPDATE THIS LINE
+        # Pass the extension flag to downloader
         downloader = UniversalDownloader(url, fmt, save_path, progress_hook, is_extension)
         downloader.download()
         item["status"] = "Completed"
@@ -936,7 +960,7 @@ def download_worker(idx):
         log_text.see(tk.END)
         print(f"🎉 [WORKER] Download successful: {title}")
         
-        # Close download window after completion - ADD THIS LINE
+        # Close download window after completion
         root.after(100, lambda: close_download_window(idx))
         
     except Exception as e:
@@ -949,7 +973,7 @@ def download_worker(idx):
         import traceback
         traceback.print_exc()
         
-        # Close download window on error - ADD THIS LINE
+        # Close download window on error
         root.after(100, lambda: close_download_window(idx))
 
 # ------------------ Modern GUI ------------------
