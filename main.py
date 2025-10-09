@@ -9,14 +9,15 @@ import hashlib
 import uuid
 import time
 import subprocess
+import platform
+import winreg
 from datetime import datetime, timedelta
 from src.downloader import Downloader
 from utils import convert_to_mp3, format_mapping
 from yt_dlp import YoutubeDL
 from flask import Flask, request, jsonify
 from download_window import show_download_window, close_download_window, active_download_windows
-import platform
-import winreg
+
 
 # ------------------ Globals ------------------
 download_queue = []
