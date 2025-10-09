@@ -3,11 +3,11 @@ SwiftHarryDM — Terms & Conditions
 Effective date: October 2025
 
 1. Overview
-   These Terms govern the sale, distribution, and use of SwiftHarryDM by <COMPANY_NAME>.
+   These Terms govern the sale, distribution, and use of SwiftHarryDM by Harsh Chaudhary.
 
 2. Purchase & Payment
    a. Price: Nrs.999 (or as displayed at time of sale).
-   b. Payment methods accepted: (e.g., UPI, bank transfer, Razorpay/Stripe/PayPal). Provide invoices / receipts on purchase.
+   b. Payment methods accepted: (e.g., eSewa/Khalti/Bank Transfer). Provide invoices / receipts on purchase.
 
 3. License & Activation
    Refer to EULA for license grant and activation steps. License keys are issued upon successful payment.
@@ -25,7 +25,7 @@ Effective date: October 2025
    Basic email support (response within 3 business days). Paid priority support options may be available.
 
 8. Intellectual Property
-   The Software and all intellectual property are owned by <COMPANY_NAME>.
+   The Software and all intellectual property are owned by Harsh Chaudhary.
 
 9. Privacy & Data
    We collect minimal data for licensing and updates (machine id, license key, timestamps, optional telemetry). See PRIVACY_POLICY.txt.
@@ -34,6 +34,6 @@ Effective date: October 2025
    See EULA for detailed limitations.
 
 11. Modification of Terms
-   <COMPANY_NAME> may update these Terms. Updated terms will be posted at https://<DOMAIN>/terms.
+   Harsh Chaudhary may update these Terms. Updated terms will be posted at https://<DOMAIN>/terms.
 
-Contact: <CONTACT_EMAIL>
+Contact: harshchy143@gmail.com

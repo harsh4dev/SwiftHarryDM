@@ -8,6 +8,7 @@ import json
 import hashlib
 import uuid
 import time
+import subprocess
 from datetime import datetime, timedelta
 from src.downloader import Downloader
 from utils import convert_to_mp3, format_mapping
@@ -16,6 +17,7 @@ from flask import Flask, request, jsonify
 from download_window import show_download_window, close_download_window, active_download_windows
 import platform
 import winreg
+
 # ------------------ Globals ------------------
 download_queue = []
 paused_flags = []
@@ -25,22 +27,80 @@ UPDATE_CHECK_URL = "https://swiftharrydm.harshchaudhary.com.np/version.txt"
 DOWNLOAD_PAGE_URL = "https://swiftharrydm.harshchaudhary.com.np/downloads"
 
 # License / Trial Config
-LICENSE_SERVER = "http://localhost:3000"
+LICENSE_SERVER = "https://swift.harshchaudhary.com.np/"
 TOKEN_FILE = os.path.join(os.path.expanduser("~"), ".swift_dm_token.json")
 TRIAL_DAYS = 7
 
-# ------------------ Modern UI Colors ------------------
+# ------------------ IDM Color Theme ------------------
 COLORS = {
-    "primary": "#667eea",
-    "primary_dark": "#5a6fd8",
-    "secondary": "#764ba2",
-    "success": "#10b981",
-    "warning": "#f59e0b",
-    "danger": "#ef4444",
-    "dark": "#1f2937",
-    "light": "#f8fafc",
-    "gray": "#6b7280"
+    "primary": "#2C5F8A",        # IDM Blue
+    "primary_light": "#3A7BB3",  # Lighter Blue
+    "primary_dark": "#1E4A6B",   # Darker Blue
+    "secondary": "#E8A735",      # Accent Orange
+    "success": "#4CAF50",        # Green
+    "warning": "#FF9800",        # Orange
+    "danger": "#F44336",         # Red
+    "dark_bg": "#2D2D2D",        # Dark Background
+    "dark_surface": "#3C3C3C",   # Dark Surface
+    "dark_text": "#FFFFFF",      # White Text
+    "light_text": "#CCCCCC",     # Light Gray Text
+    "border": "#555555",         # Border Color
+    "header_bg": "#1E3A5F",      # Header Background
+    "row_even": "#2D2D2D",       # Even Row
+    "row_odd": "#363636",        # Odd Row
+    "progress_bg": "#1E4A6B",    # Progress Background
+    "progress_fg": "#4CAF50",    # Progress Foreground
 }
+
+# ------------------ IDM Style Configuration ------------------
+def configure_idm_styles():
+    style = ttk.Style()
+    
+    # Configure main styles
+    style.configure("IDM.TFrame", background=COLORS["dark_bg"])
+    style.configure("IDM.TLabel", background=COLORS["dark_bg"], foreground=COLORS["dark_text"])
+    style.configure("IDM.TButton", 
+                   background=COLORS["primary"],
+                   foreground=COLORS["dark_text"],
+                   borderwidth=1,
+                   focuscolor=COLORS["primary_light"])
+    
+    # Progressbar style
+    style.configure("IDM.Horizontal.TProgressbar",
+                   background=COLORS["progress_fg"],
+                   troughcolor=COLORS["progress_bg"],
+                   borderwidth=0,
+                   lightcolor=COLORS["progress_fg"],
+                   darkcolor=COLORS["progress_fg"])
+    
+    # Treeview style (for download list)
+    style.configure("IDM.Treeview",
+                   background=COLORS["dark_surface"],
+                   foreground=COLORS["dark_text"],
+                   fieldbackground=COLORS["dark_surface"],
+                   borderwidth=0,
+                   rowheight=25)
+    
+    style.configure("IDM.Treeview.Heading",
+                   background=COLORS["primary_dark"],
+                   foreground=COLORS["dark_text"],
+                   relief="flat",
+                   borderwidth=0,
+                   font=('Arial', 10, 'bold'))
+    
+    # Combobox style
+    style.configure("IDM.TCombobox",
+                   background=COLORS["dark_surface"],
+                   foreground=COLORS["dark_text"],
+                   fieldbackground=COLORS["dark_surface"],
+                   borderwidth=1)
+    
+    # Scrollbar style
+    style.configure("IDM.Vertical.TScrollbar",
+                   background=COLORS["primary_dark"],
+                   troughcolor=COLORS["dark_bg"],
+                   borderwidth=0,
+                   arrowsize=12)
 
 # ------------------ Utilities ------------------
 def clean_percent(percent_str):
@@ -548,8 +608,28 @@ def check_license_status():
 
         elif "trial_start" in token:
             print("📋 Found trial in token, checking...")
-            # Trial logic remains similar but with consistent machine_id
-            # ... [rest of your trial logic]
+            try:
+                resp = requests.post(f"{LICENSE_SERVER}/trial", json={"machine_id": machine_id}, timeout=5)
+                data = resp.json()
+                if data.get("valid"):
+                    days_left = data.get("days_left", TRIAL_DAYS)
+                    license_status_var.set(f"Trial: {days_left} days left")
+                    enable_download_buttons(True)
+                    return True
+                else:
+                    enable_download_buttons(False)
+                    return ask_for_license()
+            except:
+                trial_start = datetime.fromisoformat(token["trial_start"])
+                elapsed = (datetime.now() - trial_start).days
+                if elapsed < TRIAL_DAYS:
+                    days_left = TRIAL_DAYS - elapsed
+                    license_status_var.set(f"Trial: {days_left} days left (Offline)")
+                    enable_download_buttons(True)
+                    return True
+                else:
+                    enable_download_buttons(False)
+                    return ask_for_license()
 
         print("📭 No valid token, starting fresh trial...")
         return start_trial(machine_id)
@@ -612,7 +692,7 @@ def show_about():
     about_window.title("About SwiftHarryDM")
     about_window.geometry("500x400")
     about_window.resizable(False, False)
-    about_window.configure(bg=COLORS["light"])
+    about_window.configure(bg=COLORS["dark_bg"])
     about_window.transient(root)
     about_window.grab_set()
     
@@ -630,11 +710,11 @@ def show_about():
     tk.Label(header_frame, text="🚀 SwiftHarryDM", font=("Arial", 24, "bold"), 
              bg=COLORS["primary"], fg="white").pack(expand=True)
     
-    tk.Label(header_frame, text="Universal Media Downloader", font=("Arial", 12), 
+    tk.Label(header_frame, text="Professional Download Manager", font=("Arial", 12), 
              bg=COLORS["primary"], fg="white").pack(expand=True)
     
     # Content
-    content_frame = tk.Frame(about_window, bg=COLORS["light"], padx=20, pady=20)
+    content_frame = tk.Frame(about_window, bg=COLORS["dark_bg"], padx=20, pady=20)
     content_frame.pack(fill="both", expand=True, padx=10, pady=10)
     
     info_text = f"""
@@ -651,16 +731,16 @@ Features:
 ✓ High-speed downloads
 ✓ Format conversion
 ✓ Browser integration
-✓ Modern UI/UX
-✓ Cross-platform support
+✓ Professional UI/UX
+✓ Windows support
 
-Developed with ❤️ for content creators and enthusiasts.
+Developed with ❤️ by Harsh Chaudhary.
 
 © 2024 SwiftHarryDM. All rights reserved.
     """
     
     tk.Label(content_frame, text=info_text, font=("Arial", 10), 
-             bg=COLORS["light"], justify="left", anchor="w").pack(fill="both", expand=True)
+             bg=COLORS["dark_bg"], fg=COLORS["dark_text"], justify="left", anchor="w").pack(fill="both", expand=True)
     
     # Close button
     tk.Button(about_window, text="Close", command=about_window.destroy,
@@ -675,14 +755,16 @@ def show_license_info():
         license_window = tk.Toplevel(root)
         license_window.title("License Information")
         license_window.geometry("700x500")
+        license_window.configure(bg=COLORS["dark_bg"])
         
-        text_frame = tk.Frame(license_window)
+        text_frame = tk.Frame(license_window, bg=COLORS["dark_bg"])
         text_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
-        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar = ttk.Scrollbar(text_frame, style="IDM.Vertical.TScrollbar")
         scrollbar.pack(side="right", fill="y")
         
-        txt = tk.Text(text_frame, wrap="word", font=("Arial",10), yscrollcommand=scrollbar.set)
+        txt = tk.Text(text_frame, wrap="word", font=("Arial",10), yscrollcommand=scrollbar.set,
+                     bg=COLORS["dark_surface"], fg=COLORS["dark_text"], insertbackground=COLORS["dark_text"])
         txt.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=txt.yview)
         
@@ -696,7 +778,7 @@ def show_license_window():
     license_win.title("License Management")
     license_win.geometry("400x300")
     license_win.resizable(False, False)
-    license_win.configure(bg=COLORS["light"])
+    license_win.configure(bg=COLORS["dark_bg"])
     
     license_win.transient(root)
     license_win.grab_set()
@@ -716,24 +798,24 @@ def show_license_window():
              bg=COLORS["primary"], fg="white").pack(expand=True)
     
     # Current status frame
-    status_frame = tk.Frame(license_win, padx=20, pady=20, bg=COLORS["light"])
+    status_frame = tk.Frame(license_win, padx=20, pady=20, bg=COLORS["dark_bg"])
     status_frame.pack(fill="x", padx=10, pady=10)
     
     tk.Label(status_frame, text="Current Status:", font=("Arial", 12, "bold"), 
-             bg=COLORS["light"]).pack(anchor="w")
+             bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(anchor="w")
     current_status_label = tk.Label(status_frame, textvariable=license_status_var, 
-                                   font=("Arial", 11), fg="blue", bg=COLORS["light"])
+                                   font=("Arial", 11), fg=COLORS["success"], bg=COLORS["dark_bg"])
     current_status_label.pack(anchor="w", pady=(5, 0))
     
     # Separator
     ttk.Separator(license_win, orient="horizontal").pack(fill="x", padx=20, pady=5)
     
     # Actions frame
-    actions_frame = tk.Frame(license_win, padx=20, pady=10, bg=COLORS["light"])
+    actions_frame = tk.Frame(license_win, padx=20, pady=10, bg=COLORS["dark_bg"])
     actions_frame.pack(fill="both", expand=True, padx=10, pady=10)
     
     tk.Label(actions_frame, text="License Actions:", font=("Arial", 12, "bold"), 
-             bg=COLORS["light"]).pack(anchor="w")
+             bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(anchor="w")
     
     # Buttons
     btn_enter_license = tk.Button(actions_frame, text="Enter License Key", command=ask_for_license, 
@@ -933,38 +1015,38 @@ def instant_download():
 
 def create_queue_item(idx):
     item = download_queue[idx]
-    frame = tk.Frame(queue_container, bd=1, relief="solid", padx=10, pady=8, bg="white")
+    frame = tk.Frame(queue_container, bd=1, relief="solid", padx=10, pady=8, bg=COLORS["dark_surface"])
     frame.pack(pady=4, fill="x", padx=5)
     
     # Header with title and status
-    header_frame = tk.Frame(frame, bg="white")
+    header_frame = tk.Frame(frame, bg=COLORS["dark_surface"])
     header_frame.pack(fill="x")
     
     title = item.get('title', get_filename_from_url(item['url']))
     label = tk.Label(header_frame, text=title[:80] + "..." if len(title) > 80 else title, 
-                    font=("Arial", 10, "bold"), anchor="w", bg="white")
+                    font=("Arial", 10, "bold"), anchor="w", bg=COLORS["dark_surface"], fg=COLORS["dark_text"])
     label.pack(side="left", fill="x", expand=True)
     
     status_label = tk.Label(header_frame, text=f"{item['status']}", 
-                           font=("Arial", 9, "bold"), anchor="e", bg="white")
+                           font=("Arial", 9, "bold"), anchor="e", bg=COLORS["dark_surface"], fg=COLORS["dark_text"])
     status_label.pack(side="right")
     
     # Progress bar
-    progress = ttk.Progressbar(frame, orient="horizontal", length=650, mode="determinate")
+    progress = ttk.Progressbar(frame, orient="horizontal", length=650, mode="determinate", style="IDM.Horizontal.TProgressbar")
     progress['value'] = item['progress']
     progress.pack(side="top", pady=5, fill="x")
     
     # Format and actions
-    footer_frame = tk.Frame(frame, bg="white")
+    footer_frame = tk.Frame(frame, bg=COLORS["dark_surface"])
     footer_frame.pack(fill="x")
     
     format_label = tk.Label(footer_frame, text=f"Format: {item['fmt']}", 
-                           font=("Arial", 8), anchor="w", bg="white", fg=COLORS["gray"])
+                           font=("Arial", 8), anchor="w", bg=COLORS["dark_surface"], fg=COLORS["light_text"])
     format_label.pack(side="left")
     
     if item.get('source') == 'extension':
         source_label = tk.Label(footer_frame, text="🌐 Browser", 
-                               font=("Arial", 8), bg="white", fg=COLORS["primary"])
+                               font=("Arial", 8), bg=COLORS["dark_surface"], fg=COLORS["primary"])
         source_label.pack(side="left", padx=(10, 0))
     
     queue_frames.append({"frame": frame, "label": label, "status_label": status_label, 
@@ -989,22 +1071,22 @@ def update_queue_item_color(idx):
     item = download_queue[idx]
     frame_data = queue_frames[idx]
     color_map = {
-        "Pending": "#e5e7eb", 
-        "Downloading": "#d1fae5", 
-        "Paused": "#fef3c7", 
-        "Completed": "#dbeafe", 
-        "Error": "#fee2e2"
+        "Pending": COLORS["dark_surface"], 
+        "Downloading": "#1e3a5f", 
+        "Paused": "#5d4037", 
+        "Completed": "#2e7d32", 
+        "Error": "#c62828"
     }
     text_color_map = {
-        "Pending": "#374151",
-        "Downloading": "#065f46", 
-        "Paused": "#92400e", 
-        "Completed": "#1e40af", 
-        "Error": "#991b1b"
+        "Pending": COLORS["dark_text"],
+        "Downloading": "#4fc3f7", 
+        "Paused": "#ffb74d", 
+        "Completed": "#81c784", 
+        "Error": "#ef5350"
     }
     
-    bg_color = color_map.get(item['status'], "white")
-    text_color = text_color_map.get(item['status'], "#374151")
+    bg_color = color_map.get(item['status'], COLORS["dark_surface"])
+    text_color = text_color_map.get(item['status'], COLORS["dark_text"])
     
     frame_data['frame'].config(bg=bg_color)
     frame_data['label'].config(bg=bg_color, fg=text_color)
@@ -1141,155 +1223,206 @@ def download_worker(idx):
         # Close download window on error
         root.after(100, lambda: close_download_window(idx))
 
-# ------------------ Modern GUI ------------------
+# ------------------ Professional IDM GUI ------------------
 root = tk.Tk()
-root.title(f"SwiftHarryDM v{CURRENT_VERSION} - Universal Downloader")
-root.geometry("1000x800")
-root.configure(bg=COLORS["light"])
+root.title(f"SwiftHarryDM v{CURRENT_VERSION} - Professional Download Manager")
+root.geometry("1200x700")
+root.configure(bg=COLORS["dark_bg"])
+root.minsize(1000, 600)
 
-# Apply modern theme
-style = ttk.Style()
-style.theme_use('clam')
+# Configure IDM styles
+configure_idm_styles()
 
-# Configure styles
-style.configure('TFrame', background=COLORS["light"])
-style.configure('TLabel', background=COLORS["light"], font=('Arial', 10))
-style.configure('TButton', font=('Arial', 10))
-style.configure('TEntry', font=('Arial', 11))
-style.configure('TCombobox', font=('Arial', 11))
+# Center window on screen
+root.update_idletasks()
+width = 1200
+height = 700
+x = (root.winfo_screenwidth() // 2) - (width // 2)
+y = (root.winfo_screenheight() // 2) - (height // 2)
+root.geometry(f"{width}x{height}+{x}+{y}")
 
-# Modern Menu
-menu_bar = tk.Menu(root, bg=COLORS["light"], fg=COLORS["dark"], font=('Arial', 10))
+# ------------------ Modern IDM Menu Bar ------------------
+menu_bar = tk.Menu(root, bg=COLORS["dark_bg"], fg=COLORS["dark_text"], 
+                  activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"],
+                  relief="flat", bd=0, font=('Arial', 10))
 
 # File Menu
-file_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["light"], fg=COLORS["dark"])
-file_menu.add_command(label="Clear Completed", command=clear_completed)
+file_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
+                   activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"])
+file_menu.add_command(label="Add Download", command=add_to_queue, accelerator="Ctrl+N")
+file_menu.add_command(label="Instant Download", command=instant_download, accelerator="Ctrl+I")
 file_menu.add_separator()
-file_menu.add_command(label="Exit", command=root.quit)
+file_menu.add_command(label="Import List...")
+file_menu.add_command(label="Export List...")
+file_menu.add_separator()
+file_menu.add_command(label="Exit", command=root.quit, accelerator="Alt+F4")
 menu_bar.add_cascade(label="File", menu=file_menu)
 
+# Download Menu
+download_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
+                       activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"])
+download_menu.add_command(label="Start Selected", command=start_selected, accelerator="F5")
+download_menu.add_command(label="Pause Selected", command=pause_selected, accelerator="F6")
+download_menu.add_command(label="Resume Selected", command=resume_selected, accelerator="F7")
+download_menu.add_separator()
+download_menu.add_command(label="Schedule Downloads...")
+download_menu.add_command(label="Category...")
+menu_bar.add_cascade(label="Download", menu=download_menu)
+
+# View Menu
+view_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
+                   activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"])
+view_menu.add_checkbutton(label="Toolbar")
+view_menu.add_checkbutton(label="Status Bar")
+view_menu.add_separator()
+view_menu.add_command(label="Language")
+view_menu.add_command(label="Skin")
+menu_bar.add_cascade(label="View", menu=view_menu)
+
 # License Menu
-license_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["light"], fg=COLORS["dark"])
+license_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
+                      activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"])
 license_menu.add_command(label="License Management", command=show_license_window)
-license_menu.add_command(label="View License Info", command=show_license_info)
+license_menu.add_command(label="Enter License Key", command=ask_for_license)
+license_menu.add_command(label="Check License Status", command=lambda: check_trial_or_license())
 menu_bar.add_cascade(label="License", menu=license_menu)
 
 # Help Menu
-help_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["light"], fg=COLORS["dark"])
+help_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
+                   activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"])
+help_menu.add_command(label="Documentation")
 help_menu.add_command(label="Check for Updates", command=lambda: check_for_updates(auto=False))
+help_menu.add_separator()
 help_menu.add_command(label="About SwiftHarryDM", command=show_about)
 menu_bar.add_cascade(label="Help", menu=help_menu)
 
 root.config(menu=menu_bar)
 
-# Header Frame
-header_frame = tk.Frame(root, bg=COLORS["primary"], height=80)
+# ------------------ Header Frame ------------------
+header_frame = tk.Frame(root, bg=COLORS["header_bg"], height=80)
 header_frame.pack(fill="x", side="top")
 header_frame.pack_propagate(False)
 
 # Header Content
-header_content = tk.Frame(header_frame, bg=COLORS["primary"])
+header_content = tk.Frame(header_frame, bg=COLORS["header_bg"])
 header_content.pack(expand=True, fill="both", padx=20)
 
-tk.Label(header_content, text="🚀 SwiftHarryDM", font=("Arial", 24, "bold"), 
-         bg=COLORS["primary"], fg="white").pack(side="left")
+# Logo and title
+title_frame = tk.Frame(header_content, bg=COLORS["header_bg"])
+title_frame.pack(side="left")
 
-tk.Label(header_content, text=f"v{CURRENT_VERSION}", font=("Arial", 12), 
-         bg=COLORS["primary"], fg="white").pack(side="left", padx=(10, 0))
+# Logo placeholder
+logo_label = tk.Label(title_frame, text="🚀", font=("Arial", 24), 
+                     bg=COLORS["header_bg"], fg="white")
+logo_label.pack(side="left", padx=(0, 10))
+
+title_label = tk.Label(title_frame, text="SwiftHarryDM", font=("Arial", 20, "bold"), 
+                      bg=COLORS["header_bg"], fg="white")
+title_label.pack(side="left")
+
+version_label = tk.Label(title_frame, text=f"v{CURRENT_VERSION}", font=("Arial", 10), 
+                        bg=COLORS["header_bg"], fg="#CCCCCC")
+version_label.pack(side="left", padx=(5, 0))
 
 # Status indicators
-status_frame = tk.Frame(header_content, bg=COLORS["primary"])
+status_frame = tk.Frame(header_content, bg=COLORS["header_bg"])
 status_frame.pack(side="right")
 
-license_status_var = tk.StringVar(value="Checking...")
-license_label = tk.Label(status_frame, textvariable=license_status_var, font=("Arial", 10, "bold"), 
-                        bg=COLORS["primary"], fg="white")
+license_status_var = tk.StringVar(value="Checking license...")
+license_label = tk.Label(status_frame, textvariable=license_status_var, 
+                        font=("Arial", 10, "bold"), bg=COLORS["header_bg"], fg="#4CAF50")
 license_label.pack(side="top", anchor="e")
 
 extension_status_var = tk.StringVar(value="🔌 Extension: Connecting...")
-extension_label = tk.Label(status_frame, textvariable=extension_status_var, font=("Arial", 9), 
-                          bg=COLORS["primary"], fg="#d1fae5")
+extension_label = tk.Label(status_frame, textvariable=extension_status_var, 
+                          font=("Arial", 9), bg=COLORS["header_bg"], fg="#CCCCCC")
 extension_label.pack(side="top", anchor="e")
 
-# Main Content Frame
-main_frame = tk.Frame(root, bg=COLORS["light"], padx=20, pady=20)
-main_frame.pack(fill="both", expand=True)
+# ------------------ Main Content Frame ------------------
+main_frame = ttk.Frame(root, style="IDM.TFrame")
+main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-# URL Input Section
-input_frame = tk.Frame(main_frame, bg=COLORS["light"])
-input_frame.pack(fill="x", pady=(0, 15))
+# ------------------ Quick Download Panel ------------------
+download_panel = ttk.Frame(main_frame, style="IDM.TFrame")
+download_panel.pack(fill="x", pady=(0, 15))
 
-tk.Label(input_frame, text="Enter URL:", font=("Arial", 11, "bold"), 
-         bg=COLORS["light"]).pack(anchor="w", pady=(0, 5))
+# URL input
+url_frame = ttk.Frame(download_panel, style="IDM.TFrame")
+url_frame.pack(fill="x", pady=5)
 
-url_entry_frame = tk.Frame(input_frame, bg=COLORS["light"])
-url_entry_frame.pack(fill="x")
+tk.Label(url_frame, text="URL:", font=("Arial", 10, "bold"), 
+        bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(side="left", padx=(0, 10))
 
-url_entry = tk.Entry(url_entry_frame, width=80, font=("Arial", 11), relief="solid", bd=1)
+url_entry = tk.Entry(url_frame, width=70, font=("Arial", 11), 
+                    bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
+                    insertbackground=COLORS["dark_text"],
+                    relief="solid", bd=1)
 url_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
 # Format selection
-format_frame = tk.Frame(input_frame, bg=COLORS["light"])
-format_frame.pack(fill="x", pady=(10, 0))
+format_frame = ttk.Frame(download_panel, style="IDM.TFrame")
+format_frame.pack(fill="x", pady=5)
 
-tk.Label(format_frame, text="Select Format:", font=("Arial", 11, "bold"), 
-         bg=COLORS["light"]).pack(side="left")
+tk.Label(format_frame, text="Format:", font=("Arial", 10, "bold"), 
+        bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(side="left", padx=(0, 10))
 
 format_var = tk.StringVar(value="best")
-format_menu = ttk.Combobox(format_frame, textvariable=format_var,
-                           values=["best", "1080", "720", "mp3"], state="readonly", 
-                           width=15, font=("Arial", 11))
-format_menu.pack(side="left", padx=(10, 0))
+format_combo = ttk.Combobox(format_frame, textvariable=format_var,
+                           values=["best", "1080", "720", "480", "mp3", "mp4"], 
+                           state="readonly", width=15, style="IDM.TCombobox")
+format_combo.pack(side="left", padx=(0, 20))
 
-# Action Buttons
-btn_frame = tk.Frame(main_frame, bg=COLORS["light"])
-btn_frame.pack(fill="x", pady=15)
+# Action buttons
+button_frame = ttk.Frame(download_panel, style="IDM.TFrame")
+button_frame.pack(fill="x", pady=10)
 
-def create_modern_button(parent, text, command, color, width=15):
-    return tk.Button(parent, text=text, command=command, 
-                    bg=color, fg="white", width=width, font=("Arial", 10, "bold"),
-                    relief="flat", padx=15, pady=8, bd=0)
+def create_idm_button(parent, text, command, color, width=15):
+    return tk.Button(parent, text=text, command=command,
+                    bg=color, fg="white", width=width, font=("Arial", 9, "bold"),
+                    relief="flat", padx=15, pady=6, bd=0,
+                    activebackground=color, activeforeground="white")
 
-btn_add = create_modern_button(btn_frame, "Add to Queue", add_to_queue, COLORS["primary"])
-btn_add.grid(row=0, column=0, padx=5)
+btn_add = create_idm_button(button_frame, "Add to Queue", add_to_queue, COLORS["primary"])
+btn_add.pack(side="left", padx=5)
 
-btn_instant = create_modern_button(btn_frame, "Instant Download", instant_download, COLORS["success"])
-btn_instant.grid(row=0, column=1, padx=5)
+btn_instant = create_idm_button(button_frame, "Instant Download", instant_download, COLORS["success"])
+btn_instant.pack(side="left", padx=5)
 
-btn_start = create_modern_button(btn_frame, "Start Selected", start_selected, COLORS["success"])
-btn_start.grid(row=0, column=2, padx=5)
+btn_start = create_idm_button(button_frame, "Start All", start_selected, COLORS["primary_light"])
+btn_start.pack(side="left", padx=5)
 
-btn_pause = create_modern_button(btn_frame, "Pause Selected", pause_selected, COLORS["warning"])
-btn_pause.grid(row=0, column=3, padx=5)
+btn_pause = create_idm_button(button_frame, "Pause All", pause_selected, COLORS["warning"])
+btn_pause.pack(side="left", padx=5)
 
-btn_resume = create_modern_button(btn_frame, "Resume Selected", resume_selected, COLORS["secondary"])
-btn_resume.grid(row=0, column=4, padx=5)
+btn_resume = create_idm_button(button_frame, "Resume All", resume_selected, COLORS["secondary"])
+btn_resume.pack(side="left", padx=5)
 
-btn_clear_completed = create_modern_button(btn_frame, "Clear Completed", clear_completed, COLORS["danger"])
-btn_clear_completed.grid(row=0, column=5, padx=5)
+btn_clear_completed = create_idm_button(button_frame, "Clear Completed", clear_completed, COLORS["danger"])
+btn_clear_completed.pack(side="left", padx=5)
 
-# Queue Section
-queue_section = tk.Frame(main_frame, bg=COLORS["light"])
-queue_section.pack(fill="both", expand=True, pady=(20, 0))
+# ------------------ Download Queue Section ------------------
+queue_section = ttk.Frame(main_frame, style="IDM.TFrame")
+queue_section.pack(fill="both", expand=True, pady=(10, 0))
 
-queue_header = tk.Frame(queue_section, bg=COLORS["light"])
-queue_header.pack(fill="x")
+# Section header
+header_frame = ttk.Frame(queue_section, style="IDM.TFrame")
+header_frame.pack(fill="x", pady=(0, 10))
 
-tk.Label(queue_header, text="Download Queue:", font=("Arial", 14, "bold"), 
-         bg=COLORS["light"]).pack(side="left")
+tk.Label(header_frame, text="Download Queue", font=("Arial", 14, "bold"), 
+        bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(side="left")
 
-queue_count_var = tk.StringVar(value="(0 items)")
-queue_count_label = tk.Label(queue_header, textvariable=queue_count_var, font=("Arial", 11), 
-                            bg=COLORS["light"], fg=COLORS["gray"])
+queue_count_var = tk.StringVar(value="Downloads: 0")
+queue_count_label = tk.Label(header_frame, textvariable=queue_count_var, font=("Arial", 11), 
+                            bg=COLORS["dark_bg"], fg=COLORS["light_text"])
 queue_count_label.pack(side="left", padx=(10, 0))
 
 # Queue container with scroll
-queue_container_frame = tk.Frame(queue_section, bg=COLORS["light"])
-queue_container_frame.pack(fill="both", expand=True, pady=(10, 0))
+queue_container_frame = ttk.Frame(queue_section, style="IDM.TFrame")
+queue_container_frame.pack(fill="both", expand=True, pady=(5, 0))
 
-queue_canvas = tk.Canvas(queue_container_frame, bg="white", highlightthickness=0)
-queue_scrollbar = ttk.Scrollbar(queue_container_frame, orient="vertical", command=queue_canvas.yview)
-queue_container = tk.Frame(queue_canvas, bg="white")
+queue_canvas = tk.Canvas(queue_container_frame, bg=COLORS["dark_bg"], highlightthickness=0)
+queue_scrollbar = ttk.Scrollbar(queue_container_frame, orient="vertical", command=queue_canvas.yview, style="IDM.Vertical.TScrollbar")
+queue_container = tk.Frame(queue_canvas, bg=COLORS["dark_bg"])
 
 queue_container.bind("<Configure>", lambda e: queue_canvas.configure(scrollregion=queue_canvas.bbox("all")))
 queue_canvas.create_window((0,0), window=queue_container, anchor="nw", width=queue_canvas.winfo_width())
@@ -1304,38 +1437,45 @@ def update_queue_display(event):
 
 queue_canvas.bind('<Configure>', update_queue_display)
 
-# Log Section
-log_section = tk.Frame(main_frame, bg=COLORS["light"])
-log_section.pack(fill="x", pady=(20, 0))
+# ------------------ Log Section ------------------
+log_section = ttk.Frame(main_frame, style="IDM.TFrame")
+log_section.pack(fill="x", pady=(15, 0))
 
-tk.Label(log_section, text="Activity Log:", font=("Arial", 14, "bold"), 
-         bg=COLORS["light"]).pack(anchor="w")
+tk.Label(log_section, text="Activity Log:", font=("Arial", 12, "bold"), 
+        bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(anchor="w")
 
-log_frame = tk.Frame(log_section, bg=COLORS["light"])
-log_frame.pack(fill="x", pady=(10, 0))
+log_frame = ttk.Frame(log_section, style="IDM.TFrame")
+log_frame.pack(fill="x", pady=(5, 0))
 
-log_text = tk.Text(log_frame, height=8, wrap="word", font=("Consolas", 9), 
-                  relief="solid", bd=1, bg="#1e1e1e", fg="#00ff00")
+log_text = tk.Text(log_frame, height=6, wrap="word", font=("Consolas", 9), 
+                  relief="solid", bd=1, bg="#1e1e1e", fg="#00ff00",
+                  insertbackground="#00ff00")
 log_text.pack(side="left", fill="both", expand=True)
 
-log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=log_text.yview)
+log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=log_text.yview, style="IDM.Vertical.TScrollbar")
 log_text.configure(yscrollcommand=log_scrollbar.set)
 log_scrollbar.pack(side="right", fill="y")
 
-# Footer
-footer_frame = tk.Frame(root, bg=COLORS["dark"], height=30)
-footer_frame.pack(fill="x", side="bottom")
-footer_frame.pack_propagate(False)
+# ------------------ Status Bar ------------------
+status_bar = tk.Frame(root, bg=COLORS["primary_dark"], height=25)
+status_bar.pack(fill="x", side="bottom")
+status_bar.pack_propagate(False)
 
-footer_label = tk.Label(footer_frame, text="🚀 SwiftHarryDM - Universal Downloader | © 2024 All rights reserved", 
-                       font=("Arial", 9), bg=COLORS["dark"], fg="white")
-footer_label.pack(expand=True)
+# Left side - general status
+left_status = tk.Label(status_bar, text="Ready", font=("Arial", 9), 
+                      bg=COLORS["primary_dark"], fg="white")
+left_status.pack(side="left", padx=10)
+
+# Right side - transfer info
+right_status = tk.Label(status_bar, text="Total: 0 | Active: 0 | Speed: 0 KB/s", 
+                       font=("Arial", 9), bg=COLORS["primary_dark"], fg="white")
+right_status.pack(side="right", padx=10)
 
 # ------------------ Startup Functions ------------------
 def update_queue_count():
     total = len(download_queue)
     active = len([item for item in download_queue if item["status"] == "Downloading"])
-    queue_count_var.set(f"({total} items, {active} active)")
+    queue_count_var.set(f"Downloads: {total} (Active: {active})")
     root.after(1000, update_queue_count)
 
 def check_extension_connection():
@@ -1343,13 +1483,10 @@ def check_extension_connection():
         response = requests.get("http://127.0.0.1:5001/health", timeout=2)
         if response.status_code == 200:
             extension_status_var.set("🔌 Extension: Connected ✓")
-            extension_label.config(fg="#10b981")  # Green
         else:
             extension_status_var.set("🔌 Extension: Port busy")
-            extension_label.config(fg="#f59e0b")  # Orange
     except:
         extension_status_var.set("🔌 Extension: Not connected")
-        extension_label.config(fg="#ef4444")  # Red
     
     # Check again after 5 seconds
     root.after(5000, check_extension_connection)
