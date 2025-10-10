@@ -120,6 +120,18 @@ def sanitize_filename(name):
     name = name[:200]  # Limit length
     return name if name else "download"
 
+def open_download_folder():
+    """Open the download folder in file explorer"""
+    try:
+        save_path = get_default_save_path()
+        if os.path.exists(save_path):
+            os.startfile(save_path)  # Windows
+            log_text.insert(tk.END, f"📁 Opened folder: {save_path}\n")
+        else:
+            messagebox.showinfo("Folder Not Found", f"Download folder doesn't exist:\n{save_path}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Cannot open folder:\n{str(e)}")
+
 def get_filename_from_url(url):
     return sanitize_filename(url.split('/')[-1])
 
@@ -243,6 +255,28 @@ def get_machine_id():
         # Ultimate fallback
         fallback_id = hashlib.sha256("swiftharry_fallback_id".encode()).hexdigest()
         return fallback_id
+
+def get_default_save_path():
+    """Get reliable default save path with fallbacks"""
+    try:
+        # Try Desktop first
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        if os.path.exists(desktop):
+            save_path = os.path.join(desktop, "SwiftHarryDM Downloads")
+        else:
+            # Fallback to Documents
+            documents = os.path.join(os.path.expanduser("~"), "Documents")
+            save_path = os.path.join(documents, "SwiftHarryDM Downloads")
+        
+        # Ensure directory exists
+        os.makedirs(save_path, exist_ok=True)
+        return save_path
+        
+    except Exception as e:
+        # Ultimate fallback - current directory
+        fallback = os.path.join(os.getcwd(), "SwiftHarryDM Downloads")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
 
 def save_local_token(data):
     # Always include machine_id and Windows metadata
@@ -847,48 +881,48 @@ class UniversalDownloader:
     def __init__(self, url, fmt="best", save_path=None, progress_hook=None, is_extension=False):
         self.url = url
         self.fmt = fmt
-        self.save_path = save_path or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
+        self.save_path = save_path or get_default_save_path()
         self.progress_hook = progress_hook
-        self.is_extension = is_extension  # New flag to detect extension downloads
-        os.makedirs(self.save_path, exist_ok=True)
-        print(f"🔧 [DOWNLOADER] Initialized: {url} -> {fmt} -> {self.save_path} | Extension: {is_extension}")
+        self.is_extension = is_extension
+        
+        # Ensure save directory exists and is writable
+        try:
+            os.makedirs(self.save_path, exist_ok=True)
+            # Test write permission
+            test_file = os.path.join(self.save_path, "write_test.tmp")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            print(f"✅ [DOWNLOADER] Save path is writable: {self.save_path}")
+        except Exception as e:
+            print(f"❌ [DOWNLOADER] Cannot write to {self.save_path}: {e}")
+            # Fallback to current directory
+            self.save_path = os.getcwd()
+            print(f"🔄 [DOWNLOADER] Using fallback path: {self.save_path}")
+        
+        print(f"🔧 [DOWNLOADER] Initialized: {url} -> {fmt} -> {self.save_path}")
 
     def download(self):
         try:
-            print(f"🔧 [DOWNLOADER] Starting yt-dlp download...")
+            print(f"🔧 [DOWNLOADER] Starting download to: {self.save_path}")
             
-            # Enhanced options for better compatibility
+            # Enhanced yt-dlp options with better error handling
             opts = {
                 "format": format_mapping(self.fmt),
                 "outtmpl": os.path.join(self.save_path, "%(title)s.%(ext)s"),
                 "progress_hooks": [self.progress_hook] if self.progress_hook else [],
                 "merge_output_format": "mp4",
-                "ignoreerrors": True,  # Continue on download errors
-                "retries": 10,  # Increase retries
+                "ignoreerrors": True,
+                "retries": 10,
                 "fragment_retries": 10,
                 "skip_unavailable_fragments": True,
+                "noplaylist": True,  # Always prevent playlist downloads for simplicity
             }
             
-            # CRITICAL FIX: Force single video download ONLY for extension requests
-            if self.is_extension:
-                print("🔧 [DOWNLOADER] Extension download detected - forcing SINGLE VIDEO (no playlist)")
-                opts.update({
-                    "noplaylist": True,  # THIS IS THE KEY - don't download playlist
-                    "extract_flat": False,
-                })
-            else:
-                print("🔧 [DOWNLOADER] Manual app download - playlist downloads ALLOWED")
-                # Keep default behavior (playlist downloads enabled)
-                opts.update({
-                    "noplaylist": False,  # Allow playlists for manual downloads
-                })
-            
-            # Special handling for problematic sites
-            if "facebook.com" in self.url:
-                print("🔧 [DOWNLOADER] Facebook detected - adding special options")
-                opts.update({
-                    "cookiefile": None,  # Try without cookies first
-                })
+            # Log the actual file path being used
+            with YoutubeDL({"outtmpl": opts["outtmpl"]}) as ydl:
+                # This helps us see what filename pattern will be used
+                print(f"🔧 [DOWNLOADER] Filename template: {opts['outtmpl']}")
             
             with YoutubeDL(opts) as ydl:
                 print(f"🔧 [DOWNLOADER] Extracting info for: {self.url}")
@@ -898,19 +932,39 @@ class UniversalDownloader:
                     raise Exception("Failed to extract video information")
                     
                 filename = ydl.prepare_filename(info)
-                print(f"🔧 [DOWNLOADER] Filename: {filename}")
+                final_path = os.path.abspath(filename)  # Get absolute path
+                print(f"✅ [DOWNLOADER] Download completed: {final_path}")
+                
+                # Verify file actually exists
+                if os.path.exists(final_path):
+                    file_size = os.path.getsize(final_path)
+                    print(f"✅ [DOWNLOADER] File verified: {final_path} ({file_size} bytes)")
+                else:
+                    print(f"⚠️ [DOWNLOADER] File not found at expected path: {final_path}")
+                    # Try to find the file in the save directory
+                    for file in os.listdir(self.save_path):
+                        if "tmp" not in file:  # Skip temporary files
+                            print(f"🔍 [DOWNLOADER] Found file in directory: {file}")
                 
                 if self.fmt.lower() == "mp3":
                     print(f"🔧 [DOWNLOADER] Converting to MP3...")
-                    convert_to_mp3(filename, os.path.splitext(filename)[0]+".mp3")
+                    mp3_path = os.path.splitext(filename)[0] + ".mp3"
+                    convert_to_mp3(filename, mp3_path)
+                    final_path = mp3_path
                     
+                return final_path
+                
         except Exception as e:
             print(f"❌ [DOWNLOADER] yt-dlp failed: {e}")
             
-            # Enhanced fallback with better error handling
+            # Enhanced error information
+            import traceback
+            traceback.print_exc()
+            
+            # Try fallback method
             if self.url.startswith("http"):
-                print(f"🔧 [DOWNLOADER] Falling back to enhanced downloader")
-                self.fallback_download()
+                print(f"🔧 [DOWNLOADER] Attempting fallback download...")
+                return self.fallback_download()
             else:
                 raise e
 
@@ -978,6 +1032,7 @@ class UniversalDownloader:
                             self.progress_hook(fake_info)
             
             print(f"✅ [FALLBACK] Download completed: {filepath}")
+            return filepath
             
         except Exception as fallback_error:
             print(f"❌ [FALLBACK] Fallback download also failed: {fallback_error}")
@@ -990,13 +1045,31 @@ def add_to_queue():
     if not url:
         messagebox.showerror("Error", "Please enter a URL!")
         return
-    save_path = filedialog.askdirectory(title="Select Save Location") or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
-    os.makedirs(save_path, exist_ok=True)
+    
+    # Use reliable save path
+    save_path = filedialog.askdirectory(title="Select Save Location") or get_default_save_path()
+    
+    # Double-check directory creation
+    try:
+        os.makedirs(save_path, exist_ok=True)
+        # Test if we can write to the directory
+        test_file = os.path.join(save_path, "test_write.tmp")
+        with open(test_file, 'w') as f:
+            f.write("test")
+        os.remove(test_file)
+    except Exception as e:
+        messagebox.showerror("Error", f"Cannot write to directory:\n{save_path}\nError: {e}")
+        return
+    
     item = {"url": url, "fmt": fmt, "save_path": save_path, "status": "Pending", "progress": 0}
     download_queue.append(item)
     paused_flags.append(False)
     create_queue_item(len(download_queue)-1)
     url_entry.delete(0, tk.END)
+    
+    # Log the save path for debugging
+    log_text.insert(tk.END, f"📁 Save location: {save_path}\n")
+    log_text.see(tk.END)
 
 def instant_download():
     url = url_entry.get().strip()
@@ -1004,13 +1077,27 @@ def instant_download():
     if not url:
         messagebox.showerror("Error", "Please enter a URL!")
         return
-    save_path = filedialog.askdirectory(title="Select Save Location") or os.path.join(os.path.expanduser("~"), "Desktop", "SwiftHarryDM Downloads")
-    os.makedirs(save_path, exist_ok=True)
+    
+    # Use reliable save path
+    save_path = filedialog.askdirectory(title="Select Save Location") or get_default_save_path()
+    
+    # Double-check directory creation
+    try:
+        os.makedirs(save_path, exist_ok=True)
+    except Exception as e:
+        messagebox.showerror("Error", f"Cannot create directory:\n{save_path}\nError: {e}")
+        return
+    
     item = {"url": url, "fmt": fmt, "save_path": save_path, "status": "Downloading", "progress": 0}
     download_queue.append(item)
     paused_flags.append(False)
     idx = len(download_queue)-1
     create_queue_item(idx)
+    
+    # Log the save path
+    log_text.insert(tk.END, f"📁 Instant download to: {save_path}\n")
+    log_text.see(tk.END)
+    
     threading.Thread(target=download_worker, args=(idx,), daemon=True).start()
     url_entry.delete(0, tk.END)
 
@@ -1194,6 +1281,7 @@ def download_worker(idx):
 
     try:
         log_text.insert(tk.END, f"🚀 Starting download: {title}\n")
+        log_text.insert(tk.END, f"📁 Save location: {save_path}\n")
         log_text.see(tk.END)
         print(f"🎯 [WORKER] Calling UniversalDownloader for: {title}")
         
@@ -1400,6 +1488,9 @@ btn_resume.pack(side="left", padx=5)
 
 btn_clear_completed = create_idm_button(button_frame, "Clear Completed", clear_completed, COLORS["danger"])
 btn_clear_completed.pack(side="left", padx=5)
+
+btn_open_folder = create_idm_button(button_frame, "Open Download Folder", open_download_folder, COLORS["primary_light"])
+btn_open_folder.pack(side="left", padx=5)
 
 # ------------------ Download Queue Section ------------------
 queue_section = ttk.Frame(main_frame, style="IDM.TFrame")
