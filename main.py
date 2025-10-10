@@ -13,6 +13,7 @@ import platform
 import winreg
 from datetime import datetime, timedelta
 from src.downloader import Downloader
+from utils import get_ffmpeg_path, convert_to_mp3, manual_merge_video_audio
 from utils import convert_to_mp3, format_mapping
 from yt_dlp import YoutubeDL
 from flask import Flask, request, jsonify
@@ -904,25 +905,79 @@ class UniversalDownloader:
 
     def download(self):
         try:
-            print(f"🔧 [DOWNLOADER] Starting download to: {self.save_path}")
+            print(f"🔧 [DOWNLOADER] Starting download: {self.url}")
+            print(f"🔧 [DOWNLOADER] Requested format: {self.fmt}")
             
-            # Enhanced yt-dlp options with better error handling
+            # Get ffmpeg path for potential merging/conversion
+            ffmpeg_path = get_ffmpeg_path()
+            ffmpeg_dir = os.path.dirname(ffmpeg_path)
+            
+            # Get the format selector
+            format_selector = format_mapping(self.fmt)
+            print(f"🔧 [DOWNLOADER] yt-dlp format selector: {format_selector}")
+
+            # Smart filename template to avoid duplicates and show format info
+            # yt-dlp options - let yt-dlp handle format selection natively
             opts = {
-                "format": format_mapping(self.fmt),
-                "outtmpl": os.path.join(self.save_path, "%(title)s.%(ext)s"),
                 "progress_hooks": [self.progress_hook] if self.progress_hook else [],
-                "merge_output_format": "mp4",
                 "ignoreerrors": True,
                 "retries": 10,
                 "fragment_retries": 10,
                 "skip_unavailable_fragments": True,
-                "noplaylist": True,  # Always prevent playlist downloads for simplicity
+                "noplaylist": True,
+                
+                # Use the format selector - yt-dlp will choose best available
+                "format": format_selector,
             }
+
+            # Configure postprocessors and merging based on format
+            if self.fmt.lower() == "mp3":
+                # FORCE MP3 conversion with postprocessor and FORCE .mp3 extension
+                opts.update({
+                    "postprocessors": [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                    # CRITICAL: Force .mp3 extension in the output template
+                    "outtmpl": os.path.join(self.save_path, "%(title)s.mp3"),
+                    "ffmpeg_location": ffmpeg_dir,
+                })
+                print(f"🔧 [DOWNLOADER] MP3 conversion enabled with forced .mp3 extension")
+            else:
+                # For video formats, use smart filename templates
+                if self.fmt == "best":
+                    filename_template = "%(title)s [%(format_note)s].%(ext)s"  # Show actual quality
+                else:
+                    # For specific formats like 1080, 720, include the requested format
+                    filename_template = f"%(title)s [{self.fmt}p].%(ext)s"
+                
+                opts.update({
+                    "outtmpl": os.path.join(self.save_path, filename_template),
+                    "merge_output_format": "mp4",
+                    "ffmpeg_location": ffmpeg_dir,
+                })
+                print(f"🔧 [DOWNLOADER] Video download with template: {filename_template}")
             
-            # Log the actual file path being used
-            with YoutubeDL({"outtmpl": opts["outtmpl"]}) as ydl:
-                # This helps us see what filename pattern will be used
-                print(f"🔧 [DOWNLOADER] Filename template: {opts['outtmpl']}")
+            # Only add postprocessors for MP3 (conversion)
+            # Configure postprocessors and merging based on format
+            if self.fmt.lower() == "mp3":
+                # FORCE MP3 conversion with postprocessor
+                opts["postprocessors"] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }]
+                # Force the output extension to be mp3
+                opts["outtmpl"] = os.path.join(self.save_path, "%(title)s.%(ext)s")
+                opts["ffmpeg_location"] = ffmpeg_dir
+                print(f"🔧 [DOWNLOADER] MP3 conversion enabled")
+            else:
+                # For video formats, let yt-dlp merge automatically if needed
+                opts["merge_output_format"] = "mp4"
+                opts["ffmpeg_location"] = ffmpeg_dir
+
+            print(f"🔧 [DOWNLOADER] Download options ready")
             
             with YoutubeDL(opts) as ydl:
                 print(f"🔧 [DOWNLOADER] Extracting info for: {self.url}")
@@ -932,41 +987,101 @@ class UniversalDownloader:
                     raise Exception("Failed to extract video information")
                     
                 filename = ydl.prepare_filename(info)
-                final_path = os.path.abspath(filename)  # Get absolute path
+                final_path = os.path.abspath(filename)
                 print(f"✅ [DOWNLOADER] Download completed: {final_path}")
                 
-                # Verify file actually exists
+                # Handle post-download scenarios
+                
+                # Scenario 1: MP3 conversion was handled by yt-dlp
+                # Handle MP3 conversion
+                if self.fmt.lower() == "mp3":
+                    if final_path.endswith('.mp3'):
+                        print(f"✅ [DOWNLOADER] MP3 download completed: {final_path}")
+                    else:
+                        # This shouldn't happen with forced extension, but as fallback
+                        print(f"⚠️ [DOWNLOADER] File is not MP3, renaming: {final_path}")
+                        mp3_path = os.path.splitext(final_path)[0] + ".mp3"
+                        os.rename(final_path, mp3_path)
+                        final_path = mp3_path
+                        print(f"✅ [DOWNLOADER] Renamed to MP3: {final_path}")
+                    
+                # Scenario 2: We got separate files (yt-dlp merge failed)
+                elif not final_path.endswith('.mp3'):
+                    base_name = os.path.splitext(final_path)[0]
+                    
+                    # Check for common separate file patterns
+                    separate_files_found = False
+                    for video_ext in ['.webm', '.mp4', '.mkv', '.flv']:
+                        for audio_ext in ['.m4a', '.webm', '.opus', '.mp3']:
+                            video_file = base_name + video_ext
+                            audio_file = base_name + audio_ext
+                            
+                            if (os.path.exists(video_file) and 
+                                os.path.exists(audio_file) and 
+                                video_file != audio_file):
+                                
+                                print(f"🔧 [DOWNLOADER] Found separate files: {video_file} + {audio_file}")
+                                print(f"🔧 [DOWNLOADER] Manual merge required...")
+                                
+                                if manual_merge_video_audio(video_file, audio_file, final_path):
+                                    print(f"✅ [DOWNLOADER] Manual merge successful!")
+                                    separate_files_found = True
+                                    break
+                        if separate_files_found:
+                            break
+                
+                # Verify final file
                 if os.path.exists(final_path):
                     file_size = os.path.getsize(final_path)
-                    print(f"✅ [DOWNLOADER] File verified: {final_path} ({file_size} bytes)")
+                    print(f"✅ [DOWNLOADER] Final file verified: {final_path} ({file_size} bytes)")
                 else:
-                    print(f"⚠️ [DOWNLOADER] File not found at expected path: {final_path}")
-                    # Try to find the file in the save directory
-                    for file in os.listdir(self.save_path):
-                        if "tmp" not in file:  # Skip temporary files
-                            print(f"🔍 [DOWNLOADER] Found file in directory: {file}")
-                
-                if self.fmt.lower() == "mp3":
-                    print(f"🔧 [DOWNLOADER] Converting to MP3...")
-                    mp3_path = os.path.splitext(filename)[0] + ".mp3"
-                    convert_to_mp3(filename, mp3_path)
-                    final_path = mp3_path
-                    
+                    print(f"⚠️ [DOWNLOADER] Final file not found: {final_path}")
+                        
                 return final_path
                 
         except Exception as e:
-            print(f"❌ [DOWNLOADER] yt-dlp failed: {e}")
-            
-            # Enhanced error information
+            print(f"❌ [DOWNLOADER] Download failed: {e}")
             import traceback
             traceback.print_exc()
+            raise e
+
+    def merge_video_audio(self, video_file, audio_file, output_file):
+        """Manually merge video and audio streams using ffmpeg"""
+        try:
+            ffmpeg_path = get_ffmpeg_path()
             
-            # Try fallback method
-            if self.url.startswith("http"):
-                print(f"🔧 [DOWNLOADER] Attempting fallback download...")
-                return self.fallback_download()
-            else:
-                raise e
+            # If output file exists from failed merge, remove it
+            if os.path.exists(output_file):
+                os.remove(output_file)
+                
+            cmd = [
+                ffmpeg_path, "-y",
+                "-i", video_file,
+                "-i", audio_file,
+                "-c", "copy",  # Copy streams without re-encoding
+                "-shortest",
+                output_file
+            ]
+            
+            print(f"🔧 [MERGER] Merging: {video_file} + {audio_file} -> {output_file}")
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            # Clean up separate files after successful merge
+            if os.path.exists(output_file):
+                if os.path.exists(video_file):
+                    os.remove(video_file)
+                if os.path.exists(audio_file):
+                    os.remove(audio_file)
+                print(f"✅ [MERGER] Merge completed and cleaned up separate files")
+                return output_file
+                
+        except subprocess.CalledProcessError as e:
+            print(f"❌ [MERGER] FFmpeg merge failed: {e}")
+            print(f"🔧 [MERGER] stderr: {e.stderr}")
+        except Exception as e:
+            print(f"❌ [MERGER] Merge error: {e}")
+        
+        return None
 
     def fallback_download(self):
         """Enhanced fallback downloader with better filename handling"""
