@@ -1,0 +1,95 @@
+============================================================
+SwiftHarryDM — Welcome & Next Steps
+Version: 1.0.0
+Product: SwiftHarryDM (Video Downloader)
+Publisher: Harsh Chaudhary
+Support: harshchy143@gmail.com
+Website: swiftharrydm.harshchaudhary.com.np
+Install location: %PROGRAMFILES%\SwiftHarryDM (or custom path you chose)
+============================================================
+
+Thanks for installing SwiftHarryDM — your lightweight, server-verified video downloader.
+
+IMPORTANT: License, Activation & Trial
+-------------------------------------
+• SwiftHarryDM uses a server-verified license system.
+• Activation requires a **24-character license key** (format example: XXXX-YYYY-ZZZZ-AAAA-BBBB-CCCC).
+• If you do not activate, the app runs in a **7-day trial mode** only.
+• For lifetime activation, you must enter a valid 24-character license key **inside the app** (Settings → License → Enter Key).
+• After entering the key, the app will contact the activation server to verify the key. **Internet connection is required** for activation and periodic verification at login.
+• The app verifies the license each time you sign in/launch and will disable premium features if it fails verification for an extended period.
+• You will receive your license key after purchase from the official seller (contact support for delivery).
+
+How to activate (step-by-step)
+------------------------------
+1. Launch SwiftHarryDM:
+   Start Menu → SwiftHarryDM → SwiftHarryDM
+2. Open the License screen:
+   Menu → Settings → License (or On first run you will be prompted to Activate)
+3. Click "Enter License Key" and paste your **24-character key**, then click **Activate**.
+4. The app will verify the key online. If verification succeeds you will see "License activated — lifetime". If it fails, you will get an error with steps to retry.
+5. After activation, license status is shown in Settings → License.
+
+If activation fails
+-------------------
+• Ensure the target machine is connected to the internet.
+• Check firewall/antivirus does not block the app from making outbound HTTPS requests.
+• If the activation server is unreachable temporarily, the app will allow running within trial limits; contact support if verification repeatedly fails.
+• For manual support or key re-delivery: email harshchy143@gmail.com with your purchase details.
+
+Trial mode details
+------------------
+• Unactivated installs run for 7 days from first launch.
+• Trial is limited to core functionality only (premium features disabled).
+• Trial data is securely tied to your device hardware — reinstalling the app or resetting Windows **will not reset or extend the trial**.
+• To continue using premium features after trial, buy a license and activate with your 24-character key for lifetime access.
+
+Where license and logs are stored
+--------------------------------
+• Installed program folder: <Install folder you chose during setup>
+• The app stores license metadata in a secure location:
+    %APPDATA%\SwiftHarryDM\license.json
+  (This file contains a small signed license payload only — private keys are never distributed.)
+• Logs and crash reports will be written to:
+    <install_folder>\crash_log.txt
+  (If a crash occurs, send crash_log.txt to support.)
+
+Common troubleshooting
+----------------------
+Q: App doesn't start / shows an error.
+A:
+  1) Run from Command Prompt to view errors:
+     - Open cmd.exe
+     - cd "C:\Program Files\SwiftHarryDM"
+     - .\SwiftHarryDM.exe
+  2) Check for crash_log.txt in the app folder and send it to support.
+  3) Make sure Visual C++ Redistributable (2019/2022) is installed:
+     https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
+  4) Check Windows Security / Antivirus: sometimes the EXE may be blocked or quarantined. If so, restore/allow it.
+
+Uninstall
+---------
+• Control Panel → Programs and Features → SwiftHarryDM → Uninstall
+• Or Start Menu → SwiftHarryDM → Uninstall
+• Uninstall will remove program files. License file stored in %APPDATA% will remain — delete manually if desired.
+
+Privacy & Legal
+---------------
+• SwiftHarryDM performs online license verification with the activation server. Only minimal information is sent (license key fingerprint, product id, and a random device identifier). No user video data is uploaded during normal use.
+• See PRIVACY_POLICY.txt (installed in the program folder) for full details.
+• By activating you agree to the EULA (EULA.txt) you accepted during installation.
+
+Contact & Support
+-----------------
+• Email: harshchy143@gmail.com
+• Website: swiftharrydm.harshchaudhary.com.np
+• When contacting support, include:
+  - SwiftHarryDM version (1.0.0)
+  - Windows version (e.g., Windows 11 x64)
+  - A description of the issue
+  - crash_log.txt if present
+
+Thank you for using SwiftHarryDM!
+— Harsh Chaudhary
+Copyright © 2025 Harsh Chaudhary
+============================================================
