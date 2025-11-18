@@ -6,7 +6,7 @@
 ## Project Overview
 **SwiftHarryDM** is a Windows-only, open-source download manager designed to provide a fast, reliable, and intelligent downloading experience. Inspired by IDM, SwiftHarryDM combines simplicity, speed, and advanced features for users who want complete control over their downloads.
 
-💡 *Monetization Note*: Although open-source, SwiftHarryDM will include licensing options for commercial use, allowing the developer to earn revenue while keeping community contributions open-source.
+💡 *Note*: SwiftHarryDM is now fully open-source under the **MIT License**, allowing anyone to freely use, modify, and distribute the software.
 
 ---
 
@@ -57,7 +57,6 @@
 - **GUI**: PyQt (Windows-native look)  
 - **Browser Integration**: Chrome/Firefox Extensions (JavaScript)  
 - **Video Download Support**: youtube-dl / yt-dlp Python library  
-- **License Management**: Custom licensing system for commercial users  
 - **Auto-Updater**: Python + GitHub Releases / custom server
 
 ---
@@ -79,7 +78,6 @@
 - Browser integration & auto-capture links  
 - YouTube downloader (all formats)  
 - Advanced download speed optimization  
-- Licensing system implementation  
 - **Auto-Updater**
 
 ### Phase 4 – Optional C++ Version (Future)
@@ -89,8 +87,11 @@
 
 ---
 
-## Monetization & Licensing
+## License
 
-- SwiftHarryDM will use a dual-license system:  
-  1. **Community Edition** → Free for personal use, open-source contributions welcome.  
-  2. **Commercial Edition** → Paid license required for business/commercial usage.
+This project is licensed under the **MIT License** – see the [LICENSE](LICENSE) file for details.  
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]  
+
+- Anyone is free to **use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies** of SwiftHarryDM.  
+- The software is provided “**as is**”, without warranty of any kind.

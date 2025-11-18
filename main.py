@@ -28,12 +28,7 @@ CURRENT_VERSION = "1.0.0"
 UPDATE_CHECK_URL = "https://swiftharrydm.harshchaudhary.com.np/version.txt"
 DOWNLOAD_PAGE_URL = "https://swiftharrydm.harshchaudhary.com.np/downloads"
 
-# License / Trial Config
-LICENSE_SERVER = "https://swift.harshchaudhary.com.np/"
-TOKEN_FILE = os.path.join(os.path.expanduser("~"), ".swift_dm_token.json")
-TRIAL_DAYS = 7
-
-# ------------------ IDM Color Theme ------------------
+# IDM Color Theme
 COLORS = {
     "primary": "#2C5F8A",        # IDM Blue
     "primary_light": "#3A7BB3",  # Lighter Blue
@@ -136,127 +131,6 @@ def open_download_folder():
 def get_filename_from_url(url):
     return sanitize_filename(url.split('/')[-1])
 
-def get_machine_id():
-    """Get persistent Windows Machine ID that survives resets and reformats"""
-    machine_id_file = os.path.join(os.path.expanduser("~"), ".swift_dm_machine_id")
-    
-    # Try to load stored machine ID first
-    if os.path.exists(machine_id_file):
-        try:
-            with open(machine_id_file, "r") as f:
-                stored_id = f.read().strip()
-                if len(stored_id) == 64:  # SHA256 length
-                    return stored_id
-        except:
-            pass
-    
-    # Generate new persistent machine ID using Windows-specific identifiers
-    try:
-        # Method 1: Windows Machine GUID (Most Stable - survives resets/reformats)
-        try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography")
-            machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
-            winreg.CloseKey(key)
-            base_id = f"WIN_GUID_{machine_guid}"
-            print(f"🔧 Using Windows Machine GUID: {machine_guid}")
-        except Exception as e:
-            print(f"❌ Failed to get MachineGuid: {e}")
-            base_id = None
-        
-        # Method 2: BIOS UUID (Very stable - hardware level)
-        if not base_id:
-            try:
-                result = subprocess.run(
-                    ['wmic', 'csproduct', 'get', 'UUID'], 
-                    capture_output=True, 
-                    text=True, 
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                if result.returncode == 0:
-                    bios_uuid = result.stdout.strip().split('\n')[1].strip()
-                    if bios_uuid and bios_uuid != "":
-                        base_id = f"BIOS_UUID_{bios_uuid}"
-                        print(f"🔧 Using BIOS UUID: {bios_uuid}")
-            except Exception as e:
-                print(f"❌ Failed to get BIOS UUID: {e}")
-        
-        # Method 3: BaseBoard Serial (Motherboard serial)
-        if not base_id:
-            try:
-                result = subprocess.run(
-                    ['wmic', 'baseboard', 'get', 'serialnumber'], 
-                    capture_output=True, 
-                    text=True, 
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                if result.returncode == 0:
-                    board_serial = result.stdout.strip().split('\n')[1].strip()
-                    if board_serial and board_serial not in ['', 'None', 'To be filled by O.E.M.']:
-                        base_id = f"BOARD_SN_{board_serial}"
-                        print(f"🔧 Using BaseBoard Serial: {board_serial}")
-            except Exception as e:
-                print(f"❌ Failed to get BaseBoard Serial: {e}")
-        
-        # Method 4: CPU Serial (Processor serial)
-        if not base_id:
-            try:
-                result = subprocess.run(
-                    ['wmic', 'cpu', 'get', 'processorid'], 
-                    capture_output=True, 
-                    text=True, 
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                if result.returncode == 0:
-                    cpu_id = result.stdout.strip().split('\n')[1].strip()
-                    if cpu_id and cpu_id != "":
-                        base_id = f"CPU_ID_{cpu_id}"
-                        print(f"🔧 Using CPU ID: {cpu_id}")
-            except Exception as e:
-                print(f"❌ Failed to get CPU ID: {e}")
-        
-        # Method 5: Disk Drive Serial (Physical disk serial)
-        if not base_id:
-            try:
-                result = subprocess.run(
-                    ['wmic', 'diskdrive', 'where', 'index=0', 'get', 'serialnumber'], 
-                    capture_output=True, 
-                    text=True, 
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                if result.returncode == 0:
-                    disk_serial = result.stdout.strip().split('\n')[1].strip()
-                    if disk_serial and disk_serial != "":
-                        base_id = f"DISK_SN_{disk_serial}"
-                        print(f"🔧 Using Disk Serial: {disk_serial}")
-            except Exception as e:
-                print(f"❌ Failed to get Disk Serial: {e}")
-        
-        # Final fallback - combine multiple identifiers
-        if not base_id:
-            print("⚠️ Using fallback combined identifiers")
-            hostname = platform.node()
-            mac = uuid.getnode()
-            base_id = f"FALLBACK_{hostname}_{mac}"
-        
-        # Create hash and store
-        machine_id = hashlib.sha256(base_id.encode()).hexdigest()
-        
-        # Store it persistently
-        try:
-            with open(machine_id_file, "w") as f:
-                f.write(machine_id)
-            print(f"✅ Generated and stored persistent Machine ID: {machine_id[:16]}...")
-        except Exception as e:
-            print(f"❌ Failed to store machine ID: {e}")
-            
-        return machine_id
-        
-    except Exception as e:
-        print(f"💥 Critical error generating machine ID: {e}")
-        # Ultimate fallback
-        fallback_id = hashlib.sha256("swiftharry_fallback_id".encode()).hexdigest()
-        return fallback_id
-
 def get_default_save_path():
     """Get reliable default save path with fallbacks"""
     try:
@@ -278,24 +152,6 @@ def get_default_save_path():
         fallback = os.path.join(os.getcwd(), "SwiftHarryDM Downloads")
         os.makedirs(fallback, exist_ok=True)
         return fallback
-
-def save_local_token(data):
-    # Always include machine_id and Windows metadata
-    data.update({
-        "machine_id": get_machine_id(),
-        "windows_platform": True,
-        "last_updated": datetime.now().isoformat(),
-        "app_version": CURRENT_VERSION
-    })
-    
-    with open(TOKEN_FILE, "w") as f:
-        json.dump(data, f)
-
-def load_local_token():
-    if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, "r") as f:
-            return json.load(f)
-    return None
 
 #--------------------Enhanced Extension Integration------------------------
 app = Flask(__name__)
@@ -469,235 +325,6 @@ def run_flask():
 # Start Flask in background when app launches
 threading.Thread(target=run_flask, daemon=True).start()
 
-# ------------------ License & Trial ------------------
-def start_trial(machine_id):
-    try:
-        print(f"🔄 Starting trial for machine: {machine_id}")
-        resp = requests.post(f"{LICENSE_SERVER}/trial", json={"machine_id": machine_id}, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        print(f"📄 Trial response: {data}")
-        
-        if data.get("valid"):
-            days_left = data.get("days_left", TRIAL_DAYS)
-            trial_data = {
-                "machine_id": machine_id, 
-                "trial_start": datetime.now().isoformat(),
-                "trial_start_server": data.get("trial_started"),
-                "days_left": days_left
-            }
-            save_local_token(trial_data)
-            license_status_var.set(f"Trial: {days_left} days left")
-            messagebox.showinfo("Trial Started", f"Your trial started! {days_left} days left.")
-            return True
-        else:
-            messagebox.showinfo("Trial Expired", "Trial expired. Enter a license key to continue.")
-            return ask_for_license()
-    except Exception as e:
-        print(f"❌ Trial error: {e}")
-        token = load_local_token()
-        if token and "trial_start" in token:
-            trial_start = datetime.fromisoformat(token["trial_start"])
-            elapsed = (datetime.now() - trial_start).days
-            if elapsed < TRIAL_DAYS:
-                days_left = TRIAL_DAYS - elapsed
-                license_status_var.set(f"Trial: {days_left} days left (Offline)")
-                enable_download_buttons(True)
-                return True
-        messagebox.showerror("Error", f"Cannot start trial.\n{str(e)}")
-        return False
-
-def verify_license_online(license_key, machine_id):
-    try:
-        print(f"🔐 Verifying license: {license_key} for machine: {machine_id}")
-        clean_license = license_key.strip().replace(" ", "").replace("-", "").upper()
-        if len(clean_license) != 24:
-            return False, "invalid_format"
-        
-        resp = requests.post(f"{LICENSE_SERVER}/verify", 
-                           json={"license_key": clean_license, "machine_id": machine_id}, 
-                           timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        print(f"📄 License verification response: {data}")
-        return data.get("valid", False), data.get("type", None)
-    except Exception as e:
-        print(f"❌ License verification error: {e}")
-        return False, "connection_error"
-
-def ask_for_license():
-    machine_id = get_machine_id()
-    license_key = simpledialog.askstring("License Key", "Enter your 24-character license key:")
-    if license_key:
-        clean_license = license_key.strip().replace(" ", "").replace("-", "").upper()
-        if len(clean_license) != 24:
-            messagebox.showerror("Invalid Format", "License key must be 24 characters long.")
-            return ask_for_license()
-            
-        valid, ltype = verify_license_online(clean_license, machine_id)
-        if valid:
-            license_data = {
-                "machine_id": machine_id, 
-                "license_key": clean_license, 
-                "license_type": ltype,
-                "activated_at": datetime.now().isoformat(),
-                "last_verified": datetime.now().isoformat()
-            }
-            save_local_token(license_data)
-            license_status_var.set("License: Active")
-            enable_download_buttons(True)
-            messagebox.showinfo("License Activated", "License activated successfully! Lifetime access granted.")
-            return True
-        else:
-            if ltype == "connection_error":
-                messagebox.showerror("Connection Error", "Cannot connect to license server. Please check your internet connection.")
-            else:
-                messagebox.showerror("Invalid License", "License key is invalid or already used on another machine.")
-    elif license_key is None:
-        return False
-    return False
-
-def check_license_status():
-    try:
-        token = load_local_token()
-        machine_id = get_machine_id()  # Now returns consistent Windows ID
-        
-        print(f"🔍 Checking license status for Windows Machine: {machine_id[:16]}...")
-
-        if not token:
-            print("📭 No token found, starting trial...")
-            return start_trial(machine_id)
-
-        # Check if we have stored machine ID in token
-        stored_machine_id = token.get("machine_id")
-        if stored_machine_id and stored_machine_id != machine_id:
-            print("⚠️ Machine ID mismatch detected!")
-            print(f"   Stored: {stored_machine_id[:16]}...")
-            print(f"   Current: {machine_id[:16]}...")
-            
-            # This should rarely happen with Windows Machine GUID
-            # Try to recover by showing error and asking for re-activation
-            response = messagebox.askyesno(
-                "Hardware Change Detected", 
-                "Significant hardware changes detected.\n\n"
-                "This usually happens after:\n"
-                "• Motherboard replacement\n"
-                "• Major hardware upgrades\n"
-                "• Windows reinstallation\n\n"
-                "Do you want to reactivate your license?"
-            )
-            if response:
-                # Clear old token and start fresh
-                if os.path.exists(TOKEN_FILE):
-                    os.remove(TOKEN_FILE)
-                return ask_for_license()
-            else:
-                enable_download_buttons(False)
-                return False
-
-        if "license_key" in token:
-            print("📋 Found license in token, verifying...")
-            license_key = token["license_key"]
-            valid, ltype = verify_license_online(license_key, machine_id)
-            
-            if valid:
-                # Update token with success
-                token.update({
-                    "machine_id": machine_id,
-                    "last_verified": datetime.now().isoformat(),
-                    "verification_status": "valid",
-                    "windows_verified": True
-                })
-                save_local_token(token)
-                license_status_var.set("License: Active ✓")
-                enable_download_buttons(True)
-                return True
-            else:
-                if ltype in ["connection_error", "timeout", "server_error"]:
-                    # Offline grace period - 60 days for Windows
-                    last_verified = token.get("last_verified")
-                    if last_verified:
-                        last_verify_date = datetime.fromisoformat(last_verified)
-                        days_since_verify = (datetime.now() - last_verify_date).days
-                        if days_since_verify < 60:  # 60-day offline grace
-                            license_status_var.set(f"License: Active (Offline - {60-days_since_verify}d left)")
-                            enable_download_buttons(True)
-                            return True
-                    
-                    # Offline period expired or no previous verification
-                    license_status_var.set("License: Verification Required")
-                    enable_download_buttons(False)
-                    return ask_for_license()
-                    
-                elif ltype == "machine_mismatch":
-                    messagebox.showerror(
-                        "License Activation Error", 
-                        "This license is already activated on a different computer.\n\n"
-                        "If this is your only computer, please contact support.\n"
-                        "Otherwise, deactivate the license from the other computer first."
-                    )
-                    enable_download_buttons(False)
-                    return False
-                else:
-                    enable_download_buttons(False)
-                    return ask_for_license()
-
-        elif "trial_start" in token:
-            print("📋 Found trial in token, checking...")
-            try:
-                resp = requests.post(f"{LICENSE_SERVER}/trial", json={"machine_id": machine_id}, timeout=5)
-                data = resp.json()
-                if data.get("valid"):
-                    days_left = data.get("days_left", TRIAL_DAYS)
-                    license_status_var.set(f"Trial: {days_left} days left")
-                    enable_download_buttons(True)
-                    return True
-                else:
-                    enable_download_buttons(False)
-                    return ask_for_license()
-            except:
-                trial_start = datetime.fromisoformat(token["trial_start"])
-                elapsed = (datetime.now() - trial_start).days
-                if elapsed < TRIAL_DAYS:
-                    days_left = TRIAL_DAYS - elapsed
-                    license_status_var.set(f"Trial: {days_left} days left (Offline)")
-                    enable_download_buttons(True)
-                    return True
-                else:
-                    enable_download_buttons(False)
-                    return ask_for_license()
-
-        print("📭 No valid token, starting fresh trial...")
-        return start_trial(machine_id)
-        
-    except Exception as e:
-        print(f"💥 Error in check_license_status: {e}")
-        import traceback
-        traceback.print_exc()
-        # Graceful fallback - allow limited functionality
-        license_status_var.set("Status: Check Failed - Limited Mode")
-        enable_download_buttons(True)
-        return True
-
-def check_trial_or_license():
-    def run_check():
-        try:
-            success = check_license_status()
-            if not success:
-                print("🔄 Initial check failed, retrying...")
-                time.sleep(2)
-                check_license_status()
-        except Exception as e:
-            print(f"💥 License check thread error: {e}")
-            license_status_var.set("Status: Check Failed")
-    
-    threading.Thread(target=run_check, daemon=True).start()
-    return True
-
-def enable_download_buttons(state=True):
-    for btn in [btn_add, btn_instant, btn_start, btn_pause, btn_resume, btn_clear_completed]:
-        btn.config(state=tk.NORMAL if state else tk.DISABLED)
-
 # ------------------ Update Checker ------------------
 def check_for_updates(auto=False):
     try:
@@ -761,7 +388,6 @@ SwiftHarryDM is a powerful universal downloader that supports:
 • Multiple formats (MP4, MP3, 1080p, 720p)
 • Browser extension integration
 • Queue management with pause/resume
-• License and trial system
 
 Features:
 ✓ High-speed downloads
@@ -782,100 +408,6 @@ Developed with ❤️ by Harsh Chaudhary.
     tk.Button(about_window, text="Close", command=about_window.destroy,
               bg=COLORS["primary"], fg="white", font=("Arial", 10, "bold"),
               width=20, height=2).pack(pady=10)
-
-# ------------------ License Windows ------------------
-def show_license_info():
-    try:
-        with open("LICENSE.txt","r") as f:
-            license_text = f.read()
-        license_window = tk.Toplevel(root)
-        license_window.title("License Information")
-        license_window.geometry("700x500")
-        license_window.configure(bg=COLORS["dark_bg"])
-        
-        text_frame = tk.Frame(license_window, bg=COLORS["dark_bg"])
-        text_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        scrollbar = ttk.Scrollbar(text_frame, style="IDM.Vertical.TScrollbar")
-        scrollbar.pack(side="right", fill="y")
-        
-        txt = tk.Text(text_frame, wrap="word", font=("Arial",10), yscrollcommand=scrollbar.set,
-                     bg=COLORS["dark_surface"], fg=COLORS["dark_text"], insertbackground=COLORS["dark_text"])
-        txt.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=txt.yview)
-        
-        txt.insert(tk.END, license_text)
-        txt.config(state="disabled")
-    except:
-        messagebox.showerror("Error", "LICENSE.txt not found!")
-
-def show_license_window():
-    license_win = tk.Toplevel(root)
-    license_win.title("License Management")
-    license_win.geometry("400x300")
-    license_win.resizable(False, False)
-    license_win.configure(bg=COLORS["dark_bg"])
-    
-    license_win.transient(root)
-    license_win.grab_set()
-    
-    # Center the window
-    license_win.update_idletasks()
-    x = (license_win.winfo_screenwidth() // 2) - (400 // 2)
-    y = (license_win.winfo_screenheight() // 2) - (300 // 2)
-    license_win.geometry(f"400x300+{x}+{y}")
-    
-    # Header
-    header_frame = tk.Frame(license_win, bg=COLORS["primary"], height=60)
-    header_frame.pack(fill="x", side="top")
-    header_frame.pack_propagate(False)
-    
-    tk.Label(header_frame, text="License Management", font=("Arial", 16, "bold"), 
-             bg=COLORS["primary"], fg="white").pack(expand=True)
-    
-    # Current status frame
-    status_frame = tk.Frame(license_win, padx=20, pady=20, bg=COLORS["dark_bg"])
-    status_frame.pack(fill="x", padx=10, pady=10)
-    
-    tk.Label(status_frame, text="Current Status:", font=("Arial", 12, "bold"), 
-             bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(anchor="w")
-    current_status_label = tk.Label(status_frame, textvariable=license_status_var, 
-                                   font=("Arial", 11), fg=COLORS["success"], bg=COLORS["dark_bg"])
-    current_status_label.pack(anchor="w", pady=(5, 0))
-    
-    # Separator
-    ttk.Separator(license_win, orient="horizontal").pack(fill="x", padx=20, pady=5)
-    
-    # Actions frame
-    actions_frame = tk.Frame(license_win, padx=20, pady=10, bg=COLORS["dark_bg"])
-    actions_frame.pack(fill="both", expand=True, padx=10, pady=10)
-    
-    tk.Label(actions_frame, text="License Actions:", font=("Arial", 12, "bold"), 
-             bg=COLORS["dark_bg"], fg=COLORS["dark_text"]).pack(anchor="w")
-    
-    # Buttons
-    btn_enter_license = tk.Button(actions_frame, text="Enter License Key", command=ask_for_license, 
-                                 bg=COLORS["primary"], fg="white", width=20, font=("Arial", 10),
-                                 relief="flat", padx=10, pady=5)
-    btn_enter_license.pack(pady=10)
-    
-    btn_check_status = tk.Button(actions_frame, text="Check License Status", 
-                                command=lambda: check_trial_or_license(), 
-                                bg=COLORS["success"], fg="white", width=20, font=("Arial", 10),
-                                relief="flat", padx=10, pady=5)
-    btn_check_status.pack(pady=5)
-    
-    btn_view_info = tk.Button(actions_frame, text="View License Information", 
-                             command=show_license_info, 
-                             bg=COLORS["secondary"], fg="white", width=20, font=("Arial", 10),
-                             relief="flat", padx=10, pady=5)
-    btn_view_info.pack(pady=10)
-    
-    # Close button
-    btn_close = tk.Button(license_win, text="Close", command=license_win.destroy,
-                         bg=COLORS["danger"], fg="white", width=15, font=("Arial", 10, "bold"),
-                         relief="flat", padx=10, pady=5)
-    btn_close.pack(pady=10)
 
 # ------------------ Universal Downloader ------------------
 class UniversalDownloader:
@@ -1483,14 +1015,6 @@ view_menu.add_command(label="Language")
 view_menu.add_command(label="Skin")
 menu_bar.add_cascade(label="View", menu=view_menu)
 
-# License Menu
-license_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
-                      activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"])
-license_menu.add_command(label="License Management", command=show_license_window)
-license_menu.add_command(label="Enter License Key", command=ask_for_license)
-license_menu.add_command(label="Check License Status", command=lambda: check_trial_or_license())
-menu_bar.add_cascade(label="License", menu=license_menu)
-
 # Help Menu
 help_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["dark_surface"], fg=COLORS["dark_text"],
                    activebackground=COLORS["primary"], activeforeground=COLORS["dark_text"])
@@ -1531,11 +1055,6 @@ version_label.pack(side="left", padx=(5, 0))
 # Status indicators
 status_frame = tk.Frame(header_content, bg=COLORS["header_bg"])
 status_frame.pack(side="right")
-
-license_status_var = tk.StringVar(value="Checking license...")
-license_label = tk.Label(status_frame, textvariable=license_status_var, 
-                        font=("Arial", 10, "bold"), bg=COLORS["header_bg"], fg="#4CAF50")
-license_label.pack(side="top", anchor="e")
 
 extension_status_var = tk.StringVar(value="🔌 Extension: Connecting...")
 extension_label = tk.Label(status_frame, textvariable=extension_status_var, 
@@ -1702,11 +1221,6 @@ def check_extension_connection():
 auto_update_check()
 root.after(3000, check_extension_connection)
 root.after(1000, update_queue_count)
-
-# Check trial/license at startup
-if not check_trial_or_license():
-    root.destroy()
-    exit()
 
 # Start the main loop
 root.mainloop()
