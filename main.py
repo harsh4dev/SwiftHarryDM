@@ -2,6 +2,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 import threading
 import os
+import sys
+import tarfile
+import zipfile
+from tqdm import tqdm
 import re
 import requests
 import json
@@ -53,6 +57,115 @@ COLORS = {
     "progress_bg": "#1E4A6B",    # Progress Background
     "progress_fg": "#4CAF50",    # Progress Foreground
 }
+
+# ------------------ FFMPEG Integration ------------------
+def download_and_setup_ffmpeg():
+    """Automatically download and setup FFmpeg"""
+    print("🔧 Setting up FFmpeg automatically...")
+    
+    # Determine platform
+    system = platform.system().lower()
+    arch = platform.machine().lower()
+    
+    ffmpeg_dir = os.path.join(os.path.expanduser("~"), "ffmpeg")
+    os.makedirs(ffmpeg_dir, exist_ok=True)
+    
+    # Download URLs for different platforms
+    urls = {
+        'windows': {
+            'x86_64': 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+            'amd64': 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+        },
+        'linux': {
+            'x86_64': 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz'
+        },
+        'darwin': {
+            'x86_64': 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-macos64-gpl.tar.xz'
+        }
+    }
+    
+    if system not in urls:
+        print(f"❌ Unsupported platform: {system}")
+        return False
+    
+    url = urls[system].get(arch, urls[system]['x86_64'])
+    download_path = os.path.join(ffmpeg_dir, "ffmpeg_download")
+    
+    try:
+        # Download FFmpeg
+        print(f"📥 Downloading FFmpeg from: {url}")
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        
+        with open(download_path, 'wb') as file, tqdm(
+            desc="Downloading FFmpeg",
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as bar:
+            for data in response.iter_content(chunk_size=1024):
+                size = file.write(data)
+                bar.update(size)
+        
+        # Extract based on file type
+        print("📦 Extracting FFmpeg...")
+        if download_path.endswith('.zip'):
+            with zipfile.ZipFile(download_path, 'r') as zip_ref:
+                zip_ref.extractall(ffmpeg_dir)
+        elif download_path.endswith('.tar.xz'):
+            with tarfile.open(download_path, 'r:xz') as tar_ref:
+                tar_ref.extractall(ffmpeg_dir)
+        else:
+            print(f"❌ Unsupported archive format: {download_path}")
+            return False
+        
+        # Clean up download file
+        os.remove(download_path)
+        
+        # Find ffmpeg executable
+        ffmpeg_exe = None
+        for root, dirs, files in os.walk(ffmpeg_dir):
+            for file in files:
+                if file in ['ffmpeg.exe', 'ffmpeg']:
+                    ffmpeg_exe = os.path.join(root, file)
+                    break
+            if ffmpeg_exe:
+                break
+        
+        if not ffmpeg_exe:
+            print("❌ Could not find ffmpeg executable after extraction")
+            return False
+        
+        print(f"✅ FFmpeg installed at: {ffmpeg_exe}")
+        return ffmpeg_exe
+        
+    except Exception as e:
+        print(f"❌ Failed to setup FFmpeg automatically: {e}")
+        return False
+
+def setup_ffmpeg_automatically():
+    """Setup FFmpeg automatically with user confirmation"""
+    try:
+        response = messagebox.askyesno(
+            "FFmpeg Required", 
+            "FFmpeg is required for MP3 conversion and video processing.\n\n"
+            "Do you want to download and install FFmpeg automatically?\n\n"
+            "This will download ~50MB and install it in your home directory."
+        )
+        
+        if response:
+            ffmpeg_path = download_and_setup_ffmpeg()
+            if ffmpeg_path:
+                messagebox.showinfo("Success", f"FFmpeg installed successfully!\n\nLocation: {ffmpeg_path}")
+                return True
+            else:
+                messagebox.showerror("Error", "Failed to install FFmpeg automatically.\n\nPlease install it manually.")
+                return False
+        return False
+    except Exception as e:
+        print(f"❌ Automatic FFmpeg setup failed: {e}")
+        return False
 
 # ------------------ IDM Style Configuration ------------------
 def configure_idm_styles():
@@ -878,6 +991,7 @@ def show_license_window():
     btn_close.pack(pady=10)
 
 # ------------------ Universal Downloader ------------------
+# ------------------ Universal Downloader ------------------
 class UniversalDownloader:
     def __init__(self, url, fmt="best", save_path=None, progress_hook=None, is_extension=False):
         self.url = url
@@ -903,185 +1017,258 @@ class UniversalDownloader:
         
         print(f"🔧 [DOWNLOADER] Initialized: {url} -> {fmt} -> {self.save_path}")
 
+    def get_best_working_format(self, ydl, url, requested_format):
+        """Get the best working format that avoids SABR streaming issues"""
+        try:
+            info = ydl.extract_info(url, download=False)
+            available_formats = info.get('formats', [])
+            
+            # For MP3, prefer audio formats
+            if requested_format.lower() == "mp3":
+                audio_formats = [f for f in available_formats if f.get('vcodec') == 'none']
+                if audio_formats:
+                    # Get the best audio format
+                    best_audio = max(audio_formats, key=lambda x: x.get('abr', 0) or x.get('quality', 0))
+                    return best_audio['format_id']
+            
+            # For video, avoid formats that might trigger SABR
+            video_formats = [f for f in available_formats if f.get('vcodec') != 'none']
+            if video_formats:
+                # Filter out problematic formats
+                safe_formats = [f for f in video_formats if 
+                              not f.get('format_note', '').lower().startswith('dash') and
+                              not f.get('protocol', '').startswith('m3u8')]
+                
+                if safe_formats:
+                    # Get the best safe format
+                    best_safe = max(safe_formats, key=lambda x: x.get('height', 0) or x.get('quality', 0))
+                    return best_safe['format_id']
+            
+            # Fallback to default
+            return format_mapping(requested_format)
+            
+        except Exception as e:
+            print(f"⚠️ [DOWNLOADER] Format selection failed, using default: {e}")
+            return format_mapping(requested_format)
+
     def download(self):
         try:
             print(f"🔧 [DOWNLOADER] Starting download: {self.url}")
             print(f"🔧 [DOWNLOADER] Requested format: {self.fmt}")
             
-            # Get ffmpeg path for potential merging/conversion
+            # Get ffmpeg path using your utils function
             ffmpeg_path = get_ffmpeg_path()
-            ffmpeg_dir = os.path.dirname(ffmpeg_path)
+            ffmpeg_dir = os.path.dirname(ffmpeg_path) if ffmpeg_path and os.path.exists(ffmpeg_path) else None
             
-            # Get the format selector
+            # Get the format selector using your utils function
             format_selector = format_mapping(self.fmt)
             print(f"🔧 [DOWNLOADER] yt-dlp format selector: {format_selector}")
 
-            # Smart filename template to avoid duplicates and show format info
-            # yt-dlp options - let yt-dlp handle format selection natively
+            # Enhanced yt-dlp options for better YouTube compatibility
             opts = {
                 "progress_hooks": [self.progress_hook] if self.progress_hook else [],
                 "ignoreerrors": True,
-                "retries": 10,
-                "fragment_retries": 10,
+                "retries": 5,
+                "fragment_retries": 5,
                 "skip_unavailable_fragments": True,
                 "noplaylist": True,
-                
-                # Use the format selector - yt-dlp will choose best available
                 "format": format_selector,
+                "nocheckcertificate": True,
+                "no_warnings": False,
+                "quiet": True,
+                "extract_flat": False,
+                "socket_timeout": 30,
+                "extractor_retries": 3,
             }
 
-            # Configure postprocessors and merging based on format
-            if self.fmt.lower() == "mp3":
-                # FORCE MP3 conversion with postprocessor and FORCE .mp3 extension
+            # Remove sleep delays for faster downloads
+            opts["sleep_interval"] = 0
+            opts["max_sleep_interval"] = 0
+
+            # Add YouTube-specific configuration to avoid SABR streaming issues
+            if "youtube.com" in self.url or "youtu.be" in self.url:
                 opts.update({
-                    "postprocessors": [{
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'mp3',
-                        'preferredquality': '192',
-                    }],
-                    # CRITICAL: Force .mp3 extension in the output template
-                    "outtmpl": os.path.join(self.save_path, "%(title)s.mp3"),
-                    "ffmpeg_location": ffmpeg_dir,
+                    "http_headers": {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-us,en;q=0.5',
+                        'Accept-Encoding': 'gzip,deflate',
+                        'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+                        'Connection': 'keep-alive',
+                    },
+                    # Use formats that work around SABR streaming
+                    "format": "bestaudio/best" if self.fmt.lower() == "mp3" else "best[height<=1080]",
+                    # Avoid problematic clients that trigger SABR
+                    "extractor_args": {
+                        "youtube": {
+                            "player_client": ["android", "web"],
+                            "player_skip": ["configs", "webpage"]
+                        }
+                    },
                 })
-                print(f"🔧 [DOWNLOADER] MP3 conversion enabled with forced .mp3 extension")
-            else:
-                # For video formats, use smart filename templates
-                if self.fmt == "best":
-                    filename_template = "%(title)s [%(format_note)s].%(ext)s"  # Show actual quality
+
+            # Handle MP3 conversion
+            if self.fmt.lower() == "mp3":
+                if not ffmpeg_path or ffmpeg_path == 'ffmpeg':
+                    # FFmpeg not available, fallback to best audio
+                    print("⚠️ [DOWNLOADER] FFmpeg not available, downloading best audio format")
+                    opts["format"] = "bestaudio/best"
+                    opts["outtmpl"] = os.path.join(self.save_path, "%(title)s.%(ext)s")
                 else:
-                    # For specific formats like 1080, 720, include the requested format
-                    filename_template = f"%(title)s [{self.fmt}p].%(ext)s"
-                
+                    # FFmpeg available, setup MP3 conversion
+                    opts.update({
+                        "postprocessors": [{
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'mp3',
+                            'preferredquality': '192',
+                        }],
+                        "outtmpl": os.path.join(self.save_path, "%(title)s.%(ext)s"),
+                        "ffmpeg_location": ffmpeg_dir,
+                        "postprocessor_args": ['-y'],
+                    })
+                    print(f"🔧 [DOWNLOADER] MP3 conversion configured with FFmpeg")
+            else:
+                # For video formats
+                filename_template = "%(title)s.%(ext)s"
                 opts.update({
                     "outtmpl": os.path.join(self.save_path, filename_template),
-                    "merge_output_format": "mp4",
-                    "ffmpeg_location": ffmpeg_dir,
                 })
-                print(f"🔧 [DOWNLOADER] Video download with template: {filename_template}")
-            
-            # Only add postprocessors for MP3 (conversion)
-            # Configure postprocessors and merging based on format
-            if self.fmt.lower() == "mp3":
-                # FORCE MP3 conversion with postprocessor
-                opts["postprocessors"] = [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }]
-                # Force the output extension to be mp3
-                opts["outtmpl"] = os.path.join(self.save_path, "%(title)s.%(ext)s")
-                opts["ffmpeg_location"] = ffmpeg_dir
-                print(f"🔧 [DOWNLOADER] MP3 conversion enabled")
-            else:
-                # For video formats, let yt-dlp merge automatically if needed
-                opts["merge_output_format"] = "mp4"
-                opts["ffmpeg_location"] = ffmpeg_dir
+                if ffmpeg_path and ffmpeg_path != 'ffmpeg' and os.path.exists(ffmpeg_path):
+                    opts["ffmpeg_location"] = ffmpeg_dir
+                    opts["merge_output_format"] = "mp4"
 
-            print(f"🔧 [DOWNLOADER] Download options ready")
+            print(f"🔧 [DOWNLOADER] Starting download with yt-dlp...")
             
+            final_path = None
             with YoutubeDL(opts) as ydl:
                 print(f"🔧 [DOWNLOADER] Extracting info for: {self.url}")
-                info = ydl.extract_info(self.url, download=True)
                 
-                if not info:
-                    raise Exception("Failed to extract video information")
+                try:
+                    # First try to get info without downloading
+                    info = ydl.extract_info(self.url, download=False)
+                    if not info:
+                        raise Exception("Failed to extract video information")
                     
-                filename = ydl.prepare_filename(info)
-                final_path = os.path.abspath(filename)
-                print(f"✅ [DOWNLOADER] Download completed: {final_path}")
+                    # For YouTube, try to select a better format to avoid SABR issues
+                    if "youtube.com" in self.url or "youtu.be" in self.url:
+                        try:
+                            better_format = self.get_best_working_format(ydl, self.url, self.fmt)
+                            if better_format != opts["format"]:
+                                print(f"🔄 [DOWNLOADER] Using optimized format: {better_format}")
+                                ydl.params["format"] = better_format
+                        except Exception as format_error:
+                            print(f"⚠️ [DOWNLOADER] Format optimization failed: {format_error}")
+                    
+                    print(f"🔧 [DOWNLOADER] Video info extracted successfully, starting download...")
+                    
+                    # Now download the video
+                    ydl.download([self.url])
+                    
+                    # Get the expected filename
+                    final_filename = ydl.prepare_filename(info)
+                    final_path = os.path.abspath(final_filename)
+                    
+                except Exception as extract_error:
+                    print(f"❌ [DOWNLOADER] Error during extraction: {extract_error}")
+                    # Try with different format as fallback
+                    print("🔄 [DOWNLOADER] Trying with fallback format...")
+                    if "youtube.com" in self.url or "youtu.be" in self.url:
+                        ydl.params["format"] = "best"
+                    info = ydl.extract_info(self.url, download=True)
+                    if not info:
+                        raise extract_error
+                    final_filename = ydl.prepare_filename(info)
+                    final_path = os.path.abspath(final_filename)
+            
+            # Handle MP3 file verification
+            if self.fmt.lower() == "mp3" and final_path:
+                # yt-dlp should have already converted to .mp3 if FFmpeg was available
+                mp3_path = os.path.splitext(final_path)[0] + ".mp3"
                 
-                # Handle post-download scenarios
-                
-                # Scenario 1: MP3 conversion was handled by yt-dlp
-                # Handle MP3 conversion
-                if self.fmt.lower() == "mp3":
-                    if final_path.endswith('.mp3'):
-                        print(f"✅ [DOWNLOADER] MP3 download completed: {final_path}")
-                    else:
-                        # This shouldn't happen with forced extension, but as fallback
-                        print(f"⚠️ [DOWNLOADER] File is not MP3, renaming: {final_path}")
+                if os.path.exists(mp3_path):
+                    print(f"✅ [DOWNLOADER] MP3 file created: {mp3_path}")
+                    final_path = mp3_path
+                elif os.path.exists(final_path):
+                    # If original file exists but isn't MP3, try conversion using your utils
+                    if not final_path.endswith('.mp3'):
+                        print(f"🔄 [DOWNLOADER] Converting to MP3 using utils: {final_path}")
                         mp3_path = os.path.splitext(final_path)[0] + ".mp3"
-                        os.rename(final_path, mp3_path)
-                        final_path = mp3_path
-                        print(f"✅ [DOWNLOADER] Renamed to MP3: {final_path}")
-                    
-                # Scenario 2: We got separate files (yt-dlp merge failed)
-                elif not final_path.endswith('.mp3'):
-                    base_name = os.path.splitext(final_path)[0]
-                    
-                    # Check for common separate file patterns
-                    separate_files_found = False
-                    for video_ext in ['.webm', '.mp4', '.mkv', '.flv']:
-                        for audio_ext in ['.m4a', '.webm', '.opus', '.mp3']:
-                            video_file = base_name + video_ext
-                            audio_file = base_name + audio_ext
-                            
-                            if (os.path.exists(video_file) and 
-                                os.path.exists(audio_file) and 
-                                video_file != audio_file):
-                                
-                                print(f"🔧 [DOWNLOADER] Found separate files: {video_file} + {audio_file}")
-                                print(f"🔧 [DOWNLOADER] Manual merge required...")
-                                
-                                if manual_merge_video_audio(video_file, audio_file, final_path):
-                                    print(f"✅ [DOWNLOADER] Manual merge successful!")
-                                    separate_files_found = True
-                                    break
-                        if separate_files_found:
-                            break
-                
-                # Verify final file
-                if os.path.exists(final_path):
-                    file_size = os.path.getsize(final_path)
-                    print(f"✅ [DOWNLOADER] Final file verified: {final_path} ({file_size} bytes)")
+                        if convert_to_mp3(final_path, mp3_path):
+                            final_path = mp3_path
+                            print(f"✅ [DOWNLOADER] MP3 conversion successful: {final_path}")
+                        else:
+                            print(f"⚠️ [DOWNLOADER] MP3 conversion failed, keeping original: {final_path}")
                 else:
-                    print(f"⚠️ [DOWNLOADER] Final file not found: {final_path}")
-                        
-                return final_path
+                    # Try to find any downloaded audio file
+                    base_name = os.path.splitext(os.path.basename(final_path))[0]
+                    for file in os.listdir(self.save_path):
+                        if file.startswith(base_name) and (file.endswith('.mp3') or file.endswith('.m4a') or file.endswith('.webm')):
+                            found_path = os.path.join(self.save_path, file)
+                            final_path = found_path
+                            print(f"🔍 [DOWNLOADER] Found audio file: {final_path}")
+                            break
+            
+            # Verify the final file exists
+            if not final_path or not os.path.exists(final_path):
+                # Look for any recently created files in the download directory
+                downloaded_files = []
+                try:
+                    files = [f for f in os.listdir(self.save_path) 
+                            if os.path.isfile(os.path.join(self.save_path, f))]
+                    if files:
+                        # Sort by modification time, newest first
+                        files.sort(key=lambda x: os.path.getmtime(os.path.join(self.save_path, x)), reverse=True)
+                        for file in files[:5]:  # Check last 5 files
+                            file_path = os.path.join(self.save_path, file)
+                            # Check if it was created recently (within last 2 minutes)
+                            if os.path.getmtime(file_path) > time.time() - 120:
+                                downloaded_files.append(file_path)
+                                print(f"🔍 [DOWNLOADER] Recently created file: {file_path}")
+                except Exception as e:
+                    print(f"⚠️ [DOWNLOADER] Error finding files: {e}")
                 
+                if downloaded_files:
+                    final_path = downloaded_files[0]
+                    print(f"🔍 [DOWNLOADER] Using most recent file: {final_path}")
+                else:
+                    raise Exception(f"Download failed - no files were created. YouTube might be blocking the download.")
+            
+            if not os.path.exists(final_path):
+                raise Exception(f"Download completed but file not found: {final_path}")
+            
+            file_size = os.path.getsize(final_path)
+            print(f"✅ [DOWNLOADER] Download successful: {final_path} ({file_size} bytes)")
+            return final_path
+            
         except Exception as e:
             print(f"❌ [DOWNLOADER] Download failed: {e}")
             import traceback
             traceback.print_exc()
-            raise e
+            
+            # Provide more specific error messages
+            error_msg = str(e)
+            if "403" in error_msg or "Forbidden" in error_msg:
+                raise Exception("YouTube is blocking the download (403 Forbidden). This could be due to:\n• Age-restricted content\n• Regional restrictions\n• YouTube API changes\n\nTry again later or use a VPN.")
+            elif "Unsupported URL" in error_msg:
+                raise Exception("Unsupported URL or website. Please check the URL and try again.")
+            elif "FFmpeg" in error_msg:
+                raise Exception("FFmpeg error during conversion. Please check FFmpeg installation.")
+            elif "file not found" in error_msg.lower():
+                raise Exception("Download failed - the file was not created. This usually means the download was blocked or interrupted.")
+            else:
+                raise Exception(f"Download failed: {error_msg}")
 
     def merge_video_audio(self, video_file, audio_file, output_file):
-        """Manually merge video and audio streams using ffmpeg"""
+        """Manually merge video and audio streams using ffmpeg - uses your utils function"""
         try:
-            ffmpeg_path = get_ffmpeg_path()
-            
-            # If output file exists from failed merge, remove it
-            if os.path.exists(output_file):
-                os.remove(output_file)
-                
-            cmd = [
-                ffmpeg_path, "-y",
-                "-i", video_file,
-                "-i", audio_file,
-                "-c", "copy",  # Copy streams without re-encoding
-                "-shortest",
-                output_file
-            ]
-            
-            print(f"🔧 [MERGER] Merging: {video_file} + {audio_file} -> {output_file}")
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            
-            # Clean up separate files after successful merge
-            if os.path.exists(output_file):
-                if os.path.exists(video_file):
-                    os.remove(video_file)
-                if os.path.exists(audio_file):
-                    os.remove(audio_file)
-                print(f"✅ [MERGER] Merge completed and cleaned up separate files")
+            # Use your existing manual_merge_video_audio function from utils
+            success = manual_merge_video_audio(video_file, audio_file, output_file)
+            if success:
                 return output_file
-                
-        except subprocess.CalledProcessError as e:
-            print(f"❌ [MERGER] FFmpeg merge failed: {e}")
-            print(f"🔧 [MERGER] stderr: {e.stderr}")
+            return None
         except Exception as e:
             print(f"❌ [MERGER] Merge error: {e}")
-        
-        return None
+            return None
 
     def fallback_download(self):
         """Enhanced fallback downloader with better filename handling"""
@@ -1152,6 +1339,72 @@ class UniversalDownloader:
         except Exception as fallback_error:
             print(f"❌ [FALLBACK] Fallback download also failed: {fallback_error}")
             raise fallback_error
+        
+# ------------- Verifying FFMPEG Installation ---------------
+def verify_ffmpeg_installation():
+    """Verify FFmpeg is available and working"""
+    try:
+        ffmpeg_path = get_ffmpeg_path()
+        if not os.path.exists(ffmpeg_path):
+            print("❌ FFmpeg not found! MP3 conversion will not work.")
+            print("💡 Please download FFmpeg from: https://ffmpeg.org/download.html")
+            print("💡 Or run the setup script to install it automatically.")
+            return False
+        
+        # Test if FFmpeg works
+        result = subprocess.run([ffmpeg_path, "-version"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print("✅ FFmpeg is properly installed and working")
+            return True
+        else:
+            print("❌ FFmpeg found but not working properly")
+            return False
+    except Exception as e:
+        print(f"❌ Error verifying FFmpeg: {e}")
+        return False
+    
+def get_ffmpeg_path():
+    """Get FFmpeg path with multiple fallback options"""
+    # First, check if FFmpeg is in PATH
+    try:
+        if platform.system().lower() == "windows":
+            result = subprocess.run(['where', 'ffmpeg'], capture_output=True, text=True, timeout=5)
+        else:
+            result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True, timeout=5)
+        
+        if result.returncode == 0:
+            ffmpeg_path = result.stdout.strip().split('\n')[0]
+            if os.path.exists(ffmpeg_path):
+                print(f"✅ Found FFmpeg in PATH: {ffmpeg_path}")
+                return ffmpeg_path
+    except:
+        pass
+    
+    # Check common installation locations
+    common_paths = []
+    
+    if platform.system().lower() == "windows":
+        common_paths = [
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+            r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+            os.path.join(os.path.expanduser("~"), "ffmpeg", "bin", "ffmpeg.exe"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg", "bin", "ffmpeg.exe"),
+        ]
+    else:
+        common_paths = [
+            "/usr/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            os.path.join(os.path.expanduser("~"), "ffmpeg", "bin", "ffmpeg"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg", "bin", "ffmpeg"),
+        ]
+    
+    for path in common_paths:
+        if os.path.exists(path):
+            print(f"✅ Found FFmpeg at: {path}")
+            return path
+    
+    print("❌ FFmpeg not found in common locations")
+    return None
 
 # ------------------ Queue Functions ------------------
 def add_to_queue():
@@ -1384,49 +1637,63 @@ def download_worker(idx):
             item['progress'] = progress_percent
             update_queue_item(idx)
             
-            # Debug progress
-            if progress_percent % 20 == 0:  # Log every 20%
-                print(f"📊 [WORKER] Progress: {progress_percent:.1f}% - {title}")
-                
         elif d['status'] == 'finished':
             item['progress'] = 100
             item['total_size'] = total_size  # Ensure final size is stored
             update_queue_item(idx)
             print(f"✅ [WORKER] Download finished: {title}")
 
-    try:
-        log_text.insert(tk.END, f"🚀 Starting download: {title}\n")
-        log_text.insert(tk.END, f"📁 Save location: {save_path}\n")
-        log_text.see(tk.END)
-        print(f"🎯 [WORKER] Calling UniversalDownloader for: {title}")
-        
-        # Pass the extension flag to downloader
-        downloader = UniversalDownloader(url, fmt, save_path, progress_hook, is_extension)
-        downloader.download()
-        item["status"] = "Completed"
-        update_queue_item(idx)
-        
-        success_msg = f"✅ Download completed: {title}\n"
-        log_text.insert(tk.END, success_msg)
-        log_text.see(tk.END)
-        print(f"🎉 [WORKER] Download successful: {title}")
-        
-        # Close download window after completion
-        root.after(100, lambda: close_download_window(idx))
-        
-    except Exception as e:
-        item["status"] = "Error"
-        update_queue_item(idx)
-        error_msg = f"❌ Download failed: {title} - {str(e)}\n"
-        log_text.insert(tk.END, error_msg)
-        log_text.see(tk.END)
-        print(f"💥 [WORKER] Download failed: {title} - Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        # Close download window on error
-        root.after(100, lambda: close_download_window(idx))
-
+    # Add retry mechanism for failed downloads
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        try:
+            if attempt > 0:
+                # On retry, use a simpler format to increase success chances
+                retry_fmt = "bestaudio" if fmt == "mp3" else "best"
+                log_text.insert(tk.END, f"🔄 Retry {attempt} with simplified format...\n")
+                log_text.see(tk.END)
+                downloader = UniversalDownloader(url, retry_fmt, save_path, progress_hook, is_extension)
+            else:
+                downloader = UniversalDownloader(url, fmt, save_path, progress_hook, is_extension)
+                
+            log_text.insert(tk.END, f"🚀 Starting download (attempt {attempt + 1}): {title}\n")
+            log_text.insert(tk.END, f"📁 Save location: {save_path}\n")
+            log_text.see(tk.END)
+            print(f"🎯 [WORKER] Calling UniversalDownloader for: {title}")
+            
+            downloader.download()
+            item["status"] = "Completed"
+            update_queue_item(idx)
+            
+            success_msg = f"✅ Download completed: {title}\n"
+            log_text.insert(tk.END, success_msg)
+            log_text.see(tk.END)
+            print(f"🎉 [WORKER] Download successful: {title}")
+            
+            # Close download window after completion
+            root.after(100, lambda: close_download_window(idx))
+            break  # Success, exit retry loop
+            
+        except Exception as e:
+            if attempt < max_retries:
+                wait_time = (attempt + 1) * 3  # 3, 6, 9 seconds (shorter waits)
+                retry_msg = f"🔄 Retry {attempt + 1}/{max_retries} in {wait_time} seconds...\n"
+                log_text.insert(tk.END, retry_msg)
+                log_text.see(tk.END)
+                print(f"🔄 [WORKER] Retry {attempt + 1}/{max_retries} in {wait_time}s")
+                time.sleep(wait_time)
+            else:
+                # Final failure
+                item["status"] = "Error"
+                update_queue_item(idx)
+                error_msg = f"❌ Download failed after {max_retries + 1} attempts: {title} - {str(e)}\n"
+                log_text.insert(tk.END, error_msg)
+                log_text.see(tk.END)
+                print(f"💥 [WORKER] Download failed: {title} - Error: {str(e)}")
+                
+                # Close download window on error
+                root.after(100, lambda: close_download_window(idx))
+                
 # ------------------ Professional IDM GUI ------------------
 root = tk.Tk()
 root.title(f"SwiftHarryDM v{CURRENT_VERSION} - Professional Download Manager")

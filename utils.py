@@ -6,14 +6,16 @@ import shutil
 import atexit
 
 def format_mapping(fmt):
-    """Map CLI format input to yt-dlp format selector"""
+    """Map CLI format input to yt-dlp format selector with SABR workarounds"""
     mapping = {
         "best": "best",  # Let yt-dlp choose the best quality
         "1080": "best[height<=1080]",  # Best up to 1080p
         "720": "best[height<=720]",    # Best up to 720p  
         "480": "best[height<=480]",    # Best up to 480p
         "mp3": "bestaudio/best",       # Audio only - will be converted to MP3
-        "mp4": "best[ext=mp4]"         # Prefer MP4 container
+        "mp4": "best[ext=mp4]",        # Prefer MP4 container
+        "bestaudio": "bestaudio/best", # Best audio for MP3 fallback
+        "safe": "best[height<=720][vcodec!=none][protocol!=m3u8]"  # Safe format for problematic videos
     }
     return mapping.get(fmt, "best")
 
